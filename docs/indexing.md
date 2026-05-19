@@ -65,6 +65,8 @@ Required behavior:
 - Never produce an empty chunk.
 - Avoid splitting a single line unless the line is longer than `chunk_size`.
 
+When a single physical line exceeds `chunk_size`, split subchunks keep the same inclusive 1-based line range. They are distinguished by chunk text and deterministic chunk ID; rune offsets are deferred beyond the MVP.
+
 Chunk IDs must be deterministic for the same relative path, line range, chunk text, and embedding model identity.
 
 ## Embedding
@@ -93,4 +95,3 @@ Required fields:
 - Index artifact path.
 
 Warnings, such as ignored unreadable directories, print to stderr.
-
