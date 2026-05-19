@@ -1,0 +1,17 @@
+llms:
+  embedding:
+    style: openai-compatible
+    endpoint: http://192.168.0.25:1234/v1
+    model_name: text-embedding-embeddinggemma-300m-qat
+    apiKey: "sk-lm-rCKFBsk5:XVrIaU7kCFs0KpqSQkUF"
+    default_dims: 768
+  # Alternative configuration, for local embedding models:
+  # embedding:
+  #   style: gguf
+  #   model_name: https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-f32.gguf
+  #   default_dims: 384
+  reranking:
+    style: openai-compatible
+    endpoint: http://192.168.0.25:1234/v1
+    name: qwen3-reranker-0.6b      
+    apiKey: "sk-lm-rCKFBsk5:XVrIaU7kCFs0KpqSQkUF"

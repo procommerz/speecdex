@@ -1,0 +1,5 @@
+config:
+  ignored_entries:
+    - .git
+    - ignored.md
+    - */plans/*.md
