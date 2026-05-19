@@ -2,8 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/procommerz/speecdex-search/internal/config"
 )
 
 func TestParseSelectsModes(t *testing.T) {
@@ -131,7 +135,7 @@ func TestRunReturnsRuntimeErrorForValidUnimplementedModes(t *testing.T) {
 
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			code := Run(tt.args, &stdout, &stderr)
+			code := runForTest(t, tt.args, &stdout, &stderr, t.TempDir(), t.TempDir())
 			if code != ExitRuntimeError {
 				t.Fatalf("Run() exit code = %d, want %d", code, ExitRuntimeError)
 			}
@@ -142,6 +146,31 @@ func TestRunReturnsRuntimeErrorForValidUnimplementedModes(t *testing.T) {
 				t.Fatalf("Run() stderr = %q, want to contain %q", stderr.String(), tt.want)
 			}
 		})
+	}
+}
+
+func TestRunReturnsRuntimeErrorForInvalidConfig(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  service:
+    port: 70000
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitRuntimeError {
+		t.Fatalf("Run() exit code = %d, want %d", code, ExitRuntimeError)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "config.service.port") {
+		t.Fatalf("Run() stderr = %q, want config.service.port", stderr.String())
 	}
 }
 
@@ -165,4 +194,23 @@ func assertOptions(t *testing.T, got Options, want Options) {
 			t.Fatalf("Text[%d] = %q, want %q", i, got.Text[i], want.Text[i])
 		}
 	}
+}
+
+func runForTest(t *testing.T, args []string, stdout *bytes.Buffer, stderr *bytes.Buffer, projectRoot string, userHome string) int {
+	t.Helper()
+
+	return run(args, stdout, stderr, config.LoadOptions{ProjectRoot: projectRoot, UserHome: userHome})
+}
+
+func writeTestConfig(t *testing.T, root string, name string, contents string) string {
+	t.Helper()
+
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(contents)+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return path
 }

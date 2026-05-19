@@ -5,7 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+
+	"github.com/procommerz/speecdex-search/internal/config"
 )
 
 const (
@@ -45,9 +48,34 @@ func (t *textFlags) Set(value string) error {
 }
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
+	return run(args, stdout, stderr, config.LoadOptions{})
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer, loadOptions config.LoadOptions) int {
 	opts, err := Parse(args, stderr)
 	if err != nil {
 		return ExitUsageError
+	}
+
+	if loadOptions.ProjectRoot == "" {
+		projectRoot, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(stderr, "%v\n", err)
+			return ExitRuntimeError
+		}
+		loadOptions.ProjectRoot = projectRoot
+	}
+	if loadOptions.UserHome == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(stderr, "%v\n", err)
+			return ExitRuntimeError
+		}
+		loadOptions.UserHome = userHome
+	}
+	if _, err := config.Load(loadOptions); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
 	}
 
 	_ = stdout
