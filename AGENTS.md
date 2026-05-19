@@ -42,3 +42,8 @@ We build for platforms:
 - Linux (later, after we have a stable release)
 
 Building is done in Docker for security reasons, but we'll test the resulting build on the host system.
+
+
+## Test Configs
+
+The `config.yaml` and `llms.yaml` in the project source folder can be used for tests.

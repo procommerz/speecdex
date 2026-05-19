@@ -1,0 +1,4 @@
+dist/
+.speecdex/index.bin
+coverage.out
+*.tmp

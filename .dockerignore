@@ -1,0 +1,12 @@
+.git
+.gitignore
+.speecdex/index.bin
+dist
+tmp
+temp
+.DS_Store
+.idea
+.vscode
+*.swp
+*.tmp
+coverage.out

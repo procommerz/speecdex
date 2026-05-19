@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+
+ARG GO_IMAGE=golang:1.22.12-bookworm
+
+FROM ${GO_IMAGE} AS base
+WORKDIR /src
+ENV GOTOOLCHAIN=local
+
+COPY go.mod ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+	go mod download
+
+COPY . .
+
+FROM base AS test
+RUN --mount=type=cache,target=/go/pkg/mod \
+	--mount=type=cache,target=/root/.cache/go-build \
+	go test ./...
+
+FROM base AS builder
+ARG GOOS=darwin
+ARG GOARCH=arm64
+ARG CGO_ENABLED=0
+ARG BIN_NAME=speecdex
+ENV GOOS=${GOOS}
+ENV GOARCH=${GOARCH}
+ENV CGO_ENABLED=${CGO_ENABLED}
+RUN --mount=type=cache,target=/go/pkg/mod \
+	--mount=type=cache,target=/root/.cache/go-build \
+	go build -trimpath -o /out/${BIN_NAME}-${GOOS}-${GOARCH} ./cmd/speecdex
+
+FROM scratch AS artifact
+COPY --from=builder /out/ /

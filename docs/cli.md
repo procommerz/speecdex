@@ -14,7 +14,7 @@ Rebuild the local index for the current folder tree.
 
 Required behavior:
 
-- Run indexing mode when no `--query`, `--text`, or `--service` flag is provided.
+- Run indexing mode when no `--query`, `--text`, or `--service` flag is provided (with some progress visualization).
 - Read configuration before discovery.
 - Discover, chunk, embed, and store indexed chunks.
 - Print a concise indexing summary to stdout.

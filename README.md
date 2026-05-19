@@ -24,3 +24,36 @@ You can run `speecdex --service` to launch a persistent service that will provid
 Reindex markdown docs in the  current folder tree: `speecdex`
 Search in the index, semantic only: `speecdex --query "root business object definitions"`
 Search in the index semantic OR any text match: `speecdex --query "root business object definitions" --text "extends BusinessObject" --text "implements BusinessObject"`
+
+## Building
+
+Builds run inside Docker so the host machine does not need to execute the Go
+toolchain or downloaded module code directly.
+
+Build the default macOS Apple Silicon binary:
+
+```sh
+make docker-build
+```
+
+The binary is written to:
+
+```text
+dist/speecdex-darwin-arm64
+```
+
+Run tests inside the same pinned Go builder image:
+
+```sh
+make docker-test
+```
+
+The build can be adjusted with make variables:
+
+```sh
+make docker-build GOOS=darwin GOARCH=amd64
+```
+
+The MVP build path uses `CGO_ENABLED=0`, which is suitable for the current pure
+Go CLI. If future local GGUF runtime work requires cgo, the cross-compilation
+strategy will need to be revisited.
