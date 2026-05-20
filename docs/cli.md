@@ -48,7 +48,7 @@ Summary output must include:
 Progress output must use this form:
 
 ```text
-Indexing file <current>/<total>: <path> (<chunks> chunks) | elapsed <duration> | <rate> chunks/s | ETA <duration>
+Indexing file <current>/<total>: <path> (<chunks> chunks, mean <chars> chars) | elapsed <duration> | <rate> chunks/s | ETA <duration>
 ```
 
 ### `speecdex --init`

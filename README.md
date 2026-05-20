@@ -1,75 +1,126 @@
-# Speecdex - In-Place Local Markdown Files Indexer and Vector Search Tool
+# Speecdex - Local Markdown Vector Search
 
-## LLMs for Embedding and Reranking
+Speecdex is a local-first CLI for developers who want semantic and literal
+search over Markdown documentation in a project folder. It recursively indexes
+Markdown files in place, stores a compact local index, and returns
+source-grounded matches with file paths, line ranges, scores, and chunk text.
 
-LLMs are configured in the config file in `~/.speecdex/llms.yml`, which can be overridden with a similar config dir and file at the call site directory.
+The MVP is scoped to predictable local developer use: Markdown files under the
+current working directory, project/user YAML configuration, OpenAI-compatible
+embeddings, an optional local embedding service, and fenced YAML search output.
 
-Embedding is required. It can be either a remote endpoint or a built-in GGUF model.
+## Quick Start
 
-Reranking is optional and is only active when an LLM configuration is provided.
+Initialize project config files:
 
-## Using Local Models
+```sh
+speecdex --init
+```
 
-When configured to use a local model, the app will try to download this configured model upon startup, if it's not found. The default model is BGE Small EN v1.5 (F32):
+Build or rebuild the local index:
 
-`https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-f32.gguf`
+```sh
+speecdex
+```
 
-GGUF is the model file format used by `llama.cpp`.
+Run semantic search:
 
-You can run `speecdex --service` to launch a persistent service that will provide a localhost embedding endpoint (on a configurable port, default=8248) using that local GGUF model (or another model configured in `llms.yml`). When users run the speecdex with search arguments, the app will first check if this endpoint is available and use it, if not - will fallback to the configurated endpoint.
+```sh
+speecdex --query "root business object definitions"
+```
 
+Run literal-only search without embedding the query:
 
-## CLI Interface
+```sh
+speecdex --text "extends BusinessObject"
+```
 
-Initialize project config files in the current folder: `speecdex --init`
+Combine semantic search with one or more literal matches:
 
-This creates `.speecdex/config.yaml` and `.speecdex/llms.yaml` when missing,
-without overwriting existing `.yaml` or `.yml` config files.
+```sh
+speecdex --query "root business object definitions" --text "extends BusinessObject" --text "implements BusinessObject"
+```
 
-Install the project docs-search skill for local Codex or Claude Code setups:
-`speecdex --install-skill`
+## Commands
 
-This writes `.codex/skills/docs-search/SKILL.md` and/or
-`.claude/skills/docs-search/SKILL.md` when local agent folders or marker files
-are present. Existing skill files are preserved.
+`speecdex --init` creates `.speecdex/config.yaml` and
+`.speecdex/llms.yaml` when missing. Existing `.yaml` or `.yml` config files are
+preserved.
 
-Reindex markdown docs in the current folder tree: `speecdex`
+`speecdex` indexes `.md` and `.markdown` files under the current working
+directory. Matching is case-insensitive. The index is written to
+`.speecdex/index.bin`.
 
-Speecdex compares Markdown file checksums against the previous compatible index.
-Unchanged files reuse stored chunks and embeddings, changed files are
+Speecdex compares Markdown file checksums against the previous compatible
+index. Unchanged files reuse stored chunks and embeddings, changed files are
 rechunked and reembedded, and deleted files are retained as deleted index
 records so restoring the same content can undelete them without another
 embedding call.
 
-Force a fresh rechunk/reembed of current files: `speecdex --force`
+`speecdex --force` rebuilds current files without checksum reuse. Deleted
+records for files that are still missing are preserved.
 
-During indexing, Speecdex prints per-file progress to stderr and the final
-indexing summary to stdout. When run inside a git worktree, the index stores
-the active branch and includes it in the summary. Rebuild reuse diagnostics
-also print to stderr:
+`speecdex --query "..."` searches the existing index semantically.
+
+`speecdex --text "..."` searches stored chunk text literally. Multiple
+`--text` flags are treated as OR conditions. Literal matching is
+case-sensitive for the MVP.
+
+`speecdex --show-branch` prints the git branch stored in the current index.
+
+`speecdex --install-skill` installs the packaged `docs-search` skill for local
+Codex or Claude Code project setups. It writes
+`.codex/skills/docs-search/SKILL.md` and/or
+`.claude/skills/docs-search/SKILL.md` when local agent folders or marker files
+are present. Existing skill files are preserved.
+
+During indexing, Speecdex prints per-file progress and rebuild diagnostics to
+stderr, and the final indexing summary to stdout:
 
 ```text
-Indexing file 1/3: docs/overview.md (2 chunks) | elapsed 1s | 2.00 chunks/s | ETA 1s
+Indexing file 1/3: docs/overview.md (2 chunks, mean 843 chars) | elapsed 1s | 2.00 chunks/s | ETA 1s
 Index rebuild: reused 4 chunks | embedded 2 chunks | retained deleted 1 chunks
 ```
 
-Search in the index, semantic only: `speecdex --query "root business object definitions"`
+Search commands load the existing index and never rebuild it automatically.
+Search output is machine-readable fenced YAML on stdout:
 
-Search in the index semantic OR any text match: `speecdex --query "root business object definitions" --text "extends BusinessObject" --text "implements BusinessObject"`
-
-Search output includes the branch that was active when the index was written:
-
+````text
 ```yaml
-results: []
+results:
+  - file: docs/example.md
+    start_line: 10
+    end_line: 24
+    score: 0.8123
+    match_sources:
+      - semantic
+      - text
+    matched_text:
+      - extends BusinessObject
+    text: |
+      Chunk text appears here.
 indexed_branch: main
 ```
+````
 
-Print only the branch stored in the current index: `speecdex --show-branch`
+## Configuration
 
-## App Configuration
+Speecdex reads configuration from two scopes:
 
-Speecdex reads optional app settings from `.speecdex/config.yaml` in the current
-project, inheriting missing values from `~/.speecdex/config.yaml`.
+- User scope: `~/.speecdex/`
+- Project scope: `.speecdex/` in the current working directory
+
+Project configuration overrides user configuration. Missing project values
+inherit from user configuration, and missing user values fall back to built-in
+defaults where available.
+
+Both `.yaml` and `.yml` extensions are supported:
+
+- App config: `config.yaml` or `config.yml`
+- Model config: `llms.yaml` or `llms.yml`
+
+When both extensions exist in the same scope for the same config type,
+`.yaml` takes precedence over `.yml`.
 
 Use `only_entries` to narrow Markdown discovery before ignores are applied, and
 `ignored_entries` to exclude matches afterward:
@@ -82,7 +133,40 @@ config:
   ignored_entries:
     - .git
     - docs/private
+  service:
+    port: 8248
+  indexing:
+    chunk_size: 1200
+    chunk_overlap: 200
 ```
+
+Embedding configuration is required for indexing and semantic search. The
+packaged stub config uses an OpenAI-compatible endpoint with this model name:
+
+```yaml
+llms:
+  embedding:
+    style: openai-compatible
+    endpoint: http://127.0.0.1:1234/v1
+    model_name: text-embedding-embeddinggemma-300m-qat
+    api_key: ""
+    default_dims: 768
+```
+
+Reranking is optional and is active only when `llms.reranking` is configured.
+
+## Local Embedding Service
+
+`speecdex --service` starts a persistent localhost embedding service on
+`127.0.0.1:8248` unless `config.service.port` overrides the port.
+
+The service exposes an OpenAI-compatible `/v1/embeddings` endpoint. When a
+compatible local service is reachable, indexing and semantic search use it
+before falling back to a configured OpenAI-compatible endpoint.
+
+For GGUF configuration, normal CLI commands do not embed directly in process
+for the MVP. Start `speecdex --service` first, or configure an
+OpenAI-compatible fallback endpoint.
 
 ## Building
 
@@ -99,6 +183,14 @@ The binary is written to:
 
 ```text
 dist/speecdex-darwin-arm64
+```
+
+Run it from the repository root:
+
+```sh
+./dist/speecdex-darwin-arm64 --init
+./dist/speecdex-darwin-arm64
+./dist/speecdex-darwin-arm64 --query "root business object definitions"
 ```
 
 Run tests inside the same pinned Go builder image:

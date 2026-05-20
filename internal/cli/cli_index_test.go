@@ -103,8 +103,8 @@ config:
 	}
 
 	gotStderr := stderr.String()
-	assertProgressLine(t, gotStderr, `Indexing file 1/2: docs/a\.md \(1 chunks\) \| elapsed 1s \| 1\.00 chunks/s \| ETA 1s`)
-	assertProgressLine(t, gotStderr, `Indexing file 2/2: docs/b\.markdown \(1 chunks\) \| elapsed 2s \| 1\.00 chunks/s \| ETA 0s`)
+	assertProgressLine(t, gotStderr, `Indexing file 1/2: docs/a\.md \(1 chunks, mean 28 chars\) \| elapsed 1s \| 1\.00 chunks/s \| ETA 1s`)
+	assertProgressLine(t, gotStderr, `Indexing file 2/2: docs/b\.markdown \(1 chunks, mean 33 chars\) \| elapsed 2s \| 1\.00 chunks/s \| ETA 0s`)
 
 	gotStdout := stdout.String()
 	for _, want := range []string{
@@ -249,7 +249,7 @@ config:
 	if code != ExitOK {
 		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "Indexing file 1/1: docs/allowed.md (1 chunks)") {
+	if !strings.Contains(stderr.String(), "Indexing file 1/1: docs/allowed.md (1 chunks, mean ") {
 		t.Fatalf("Run() stderr = %q, want indexing progress for included file", stderr.String())
 	}
 
@@ -333,9 +333,9 @@ config:
 	}
 
 	got := stderr.String()
-	first := strings.Index(got, "Indexing file 1/3: a-first.md (1 chunks)")
-	middle := strings.Index(got, "Indexing file 2/3: m-middle.md (1 chunks)")
-	last := strings.Index(got, "Indexing file 3/3: z-last.md (1 chunks)")
+	first := strings.Index(got, "Indexing file 1/3: a-first.md (1 chunks, mean 7 chars)")
+	middle := strings.Index(got, "Indexing file 2/3: m-middle.md (1 chunks, mean 8 chars)")
+	last := strings.Index(got, "Indexing file 3/3: z-last.md (1 chunks, mean 6 chars)")
 	if first < 0 || middle < 0 || last < 0 || !(first < middle && middle < last) {
 		t.Fatalf("stderr = %q, want progress in stable lexical file order", got)
 	}

@@ -66,6 +66,10 @@ config:
 	if !strings.Contains(stderr.String(), "Index rebuild: reused 2 chunks | embedded 0 chunks | retained deleted 0 chunks") {
 		t.Fatalf("stderr = %q, want rebuild reuse diagnostic", stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "Indexing file 1/2: docs/a.md (1 chunks, mean 17 chars)") ||
+		!strings.Contains(stderr.String(), "Indexing file 2/2: docs/b.md (1 chunks, mean 17 chars)") {
+		t.Fatalf("stderr = %q, want reused chunk progress with mean character lengths", stderr.String())
+	}
 	if strings.Contains(stderr.String(), "previous index cannot be reused") {
 		t.Fatalf("stderr = %q, did not expect previous index warning for compatible reuse", stderr.String())
 	}

@@ -128,6 +128,7 @@ Each progress line must include:
 - Current file number out of total files.
 - Current relative file path.
 - Number of chunks for that file.
+- Mean chunk length for that file, in characters.
 - Elapsed time.
 - Current cumulative chunks-per-second rate.
 - ETA based on remaining chunks.
@@ -135,7 +136,7 @@ Each progress line must include:
 Progress lines must use this form:
 
 ```text
-Indexing file <current>/<total>: <path> (<chunks> chunks) | elapsed <duration> | <rate> chunks/s | ETA <duration>
+Indexing file <current>/<total>: <path> (<chunks> chunks, mean <chars> chars) | elapsed <duration> | <rate> chunks/s | ETA <duration>
 ```
 
 ## Index Summary

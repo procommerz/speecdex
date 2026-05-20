@@ -202,7 +202,7 @@ func runIndex(opts Options, cfg config.Config, projectRoot string, stdout io.Wri
 
 		chunks = append(chunks, fileChunks...)
 		indexedChunks += len(fileChunks)
-		progress.Report(index+1, filePlan.File.RelativePath, len(fileChunks), indexedChunks)
+		progress.Report(index+1, filePlan.File.RelativePath, len(fileChunks), meanChunkTextCharacters(fileChunks), indexedChunks)
 	}
 	chunks = append(chunks, plan.DeletedChunks...)
 	sortStorageChunks(chunks)
@@ -360,6 +360,17 @@ func storageChunksForFile(file indexing.MarkdownFile, chunks []indexing.Chunk, v
 	return out, nil
 }
 
+func meanChunkTextCharacters(chunks []storage.Chunk) int {
+	if len(chunks) == 0 {
+		return 0
+	}
+	total := 0
+	for _, chunk := range chunks {
+		total += len([]rune(chunk.Text))
+	}
+	return int(float64(total)/float64(len(chunks)) + 0.5)
+}
+
 func cloneStorageChunks(chunks []storage.Chunk) []storage.Chunk {
 	out := make([]storage.Chunk, len(chunks))
 	for i, chunk := range chunks {
@@ -411,7 +422,7 @@ func newIndexProgress(writer io.Writer, totalFiles int, totalChunks int, now fun
 	}
 }
 
-func (p indexProgress) Report(currentFile int, path string, fileChunks int, indexedChunks int) {
+func (p indexProgress) Report(currentFile int, path string, fileChunks int, meanChunkChars int, indexedChunks int) {
 	elapsed := p.now().Sub(p.startedAt)
 	if elapsed < 0 {
 		elapsed = 0
@@ -429,11 +440,12 @@ func (p indexProgress) Report(currentFile int, path string, fileChunks int, inde
 
 	fmt.Fprintf(
 		p.writer,
-		"Indexing file %d/%d: %s (%d chunks) | elapsed %s | %.2f chunks/s | ETA %s\n",
+		"Indexing file %d/%d: %s (%d chunks, mean %d chars) | elapsed %s | %.2f chunks/s | ETA %s\n",
 		currentFile,
 		p.totalFiles,
 		path,
 		fileChunks,
+		meanChunkChars,
 		elapsed.Round(time.Second),
 		rate,
 		eta.Round(time.Second),
