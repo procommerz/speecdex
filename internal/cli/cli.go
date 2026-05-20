@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/procommerz/speecdex-search/internal/config"
+	"github.com/procommerz/speecdex-search/internal/embeddings"
+	"github.com/procommerz/speecdex-search/internal/search"
+	"github.com/procommerz/speecdex-search/internal/storage"
 )
 
 const (
@@ -73,14 +77,81 @@ func run(args []string, stdout io.Writer, stderr io.Writer, loadOptions config.L
 		}
 		loadOptions.UserHome = userHome
 	}
-	if _, err := config.Load(loadOptions); err != nil {
+	cfg, err := config.Load(loadOptions)
+	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return ExitRuntimeError
 	}
 
-	_ = stdout
+	if opts.Mode == ModeSearch {
+		return runSearch(opts, cfg, loadOptions.ProjectRoot, stdout, stderr)
+	}
+
 	fmt.Fprintf(stderr, "speecdex %s mode is not implemented yet\n", opts.Mode)
 	return ExitRuntimeError
+}
+
+func runSearch(opts Options, cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer) int {
+	var embedder search.Embedder
+	readOptions := storage.ReadOptions{}
+	if opts.Query != "" {
+		if cfg.Embedding == nil {
+			fmt.Fprintln(stderr, "semantic search requires llms.embedding configuration")
+			return ExitRuntimeError
+		}
+		readOptions.Compatibility = storage.CompatibilityOptions{
+			EmbeddingModelIdentity: cfg.Embedding.ModelName,
+			EmbeddingDimensions:    cfg.Embedding.DefaultDims,
+			DistanceMetric:         storage.DistanceMetricCosine,
+		}
+	}
+
+	idx, err := storage.Read(projectRoot, readOptions)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+
+	if opts.Query != "" {
+		embedder, err = newSearchEmbedder(cfg)
+		if err != nil {
+			fmt.Fprintf(stderr, "%v\n", err)
+			return ExitRuntimeError
+		}
+	}
+
+	results, err := search.Run(context.Background(), idx, search.Options{
+		Query: opts.Query,
+		Text:  opts.Text,
+	}, embedder)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+	if err := search.WriteYAML(stdout, results); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+	return ExitOK
+}
+
+func newSearchEmbedder(cfg config.Config) (search.Embedder, error) {
+	model := cfg.Embedding
+	endpoint := model.Endpoint
+	switch model.Style {
+	case config.StyleOpenAICompatible:
+	case config.StyleGGUF:
+		endpoint = fmt.Sprintf("http://127.0.0.1:%d/v1", cfg.Service.Port)
+	default:
+		return nil, fmt.Errorf("unsupported embedding provider style %q", model.Style)
+	}
+
+	return embeddings.NewOpenAICompatibleClient(embeddings.OpenAICompatibleOptions{
+		Endpoint:   endpoint,
+		ModelName:  model.ModelName,
+		APIKey:     model.APIKey,
+		Dimensions: model.DefaultDims,
+	})
 }
 
 func Parse(args []string, stderr io.Writer) (Options, error) {

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/procommerz/speecdex-search/internal/config"
@@ -34,7 +35,9 @@ type MarkdownFile struct {
 	RelativePath string
 	AbsolutePath string
 	Text         string
+	ContentHash  string
 	Size         int64
+	ModifiedAt   time.Time
 }
 
 type Chunk struct {
@@ -126,11 +129,14 @@ func DiscoverMarkdown(opts Options) (DiscoveryResult, error) {
 			return &Error{Path: rel, Message: "read Markdown file as UTF-8"}
 		}
 
+		text := normalizeLineEndings(string(data))
 		result.Files = append(result.Files, MarkdownFile{
 			RelativePath: rel,
 			AbsolutePath: currentPath,
-			Text:         normalizeLineEndings(string(data)),
+			Text:         text,
+			ContentHash:  contentHash(text),
 			Size:         info.Size(),
+			ModifiedAt:   info.ModTime(),
 		})
 		return nil
 	})
@@ -211,6 +217,11 @@ func isMarkdownPath(rel string) bool {
 func normalizeLineEndings(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	return strings.ReplaceAll(text, "\r", "\n")
+}
+
+func contentHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }
 
 func splitLogicalLines(text string) []string {

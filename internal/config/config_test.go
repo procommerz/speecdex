@@ -361,14 +361,14 @@ llms:
 func TestRedactSecrets(t *testing.T) {
 	t.Parallel()
 
-	got := RedactSecrets(`apiKey: "sk-secret" api_key=sk-other Authorization: Bearer sk-third`)
-	for _, secret := range []string{"sk-secret", "sk-other", "sk-third"} {
+	got := RedactSecrets(`apiKey: "sk-secret" api_key=sk-other Authorization: Bearer sk-third https://user:token@example.com/v1`)
+	for _, secret := range []string{"sk-secret", "sk-other", "sk-third", "user:token"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("RedactSecrets() = %q, leaked %q", got, secret)
 		}
 	}
-	if strings.Count(got, "<redacted>") != 3 {
-		t.Fatalf("RedactSecrets() = %q, want three redactions", got)
+	if strings.Count(got, "<redacted>") != 4 {
+		t.Fatalf("RedactSecrets() = %q, want four redactions", got)
 	}
 }
 

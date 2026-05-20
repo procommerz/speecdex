@@ -1,6 +1,8 @@
 package indexing
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,6 +30,16 @@ func TestDiscoverMarkdownFindsMarkdownFilesInStableOrder(t *testing.T) {
 	}
 	if got.Files[1].Text != "# second\nbody\n" {
 		t.Fatalf("normalized text = %q, want CRLF normalized", got.Files[1].Text)
+	}
+	wantHash := sha256.Sum256([]byte("# second\nbody\n"))
+	if got.Files[1].ContentHash != hex.EncodeToString(wantHash[:]) {
+		t.Fatalf("ContentHash = %q, want hash of normalized text", got.Files[1].ContentHash)
+	}
+	if got.Files[1].Size == 0 {
+		t.Fatal("Size = 0, want file size metadata")
+	}
+	if got.Files[1].ModifiedAt.IsZero() {
+		t.Fatal("ModifiedAt is zero, want file modified timestamp")
 	}
 }
 

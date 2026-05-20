@@ -111,14 +111,27 @@ func Load(opts LoadOptions) (Config, error) {
 }
 
 func RedactSecrets(message string) string {
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(api[_-]?key\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)`),
-		regexp.MustCompile(`(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,}]+)`),
+	patterns := []struct {
+		pattern     *regexp.Regexp
+		replacement string
+	}{
+		{
+			pattern:     regexp.MustCompile(`(?i)(api[_-]?key\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)`),
+			replacement: `${1}<redacted>`,
+		},
+		{
+			pattern:     regexp.MustCompile(`(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,}]+)`),
+			replacement: `${1}<redacted>`,
+		},
+		{
+			pattern:     regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@\s]+)@`),
+			replacement: `${1}<redacted>@`,
+		},
 	}
 
 	redacted := message
-	for _, pattern := range patterns {
-		redacted = pattern.ReplaceAllString(redacted, `${1}<redacted>`)
+	for _, replacement := range patterns {
+		redacted = replacement.pattern.ReplaceAllString(redacted, replacement.replacement)
 	}
 	return redacted
 }
