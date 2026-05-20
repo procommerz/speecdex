@@ -15,6 +15,9 @@ func TestLoadDiscoversUserLevelConfig(t *testing.T) {
 	userHome := t.TempDir()
 	writeConfigFile(t, userHome, ".speecdex/config.yaml", `
 config:
+  only_entries:
+    - docs
+    - "*.md"
   ignored_entries:
     - .git
     - ignored.md
@@ -26,6 +29,7 @@ config:
 `)
 
 	got := loadForTest(t, projectRoot, userHome)
+	assertStrings(t, got.OnlyEntries, []string{"docs", "*.md"})
 	assertStrings(t, got.IgnoredEntries, []string{".git", "ignored.md"})
 	if got.Service.Port != 9001 {
 		t.Fatalf("Service.Port = %d, want 9001", got.Service.Port)
@@ -112,6 +116,8 @@ func TestLoadProjectConfigOverridesUserConfigFieldByField(t *testing.T) {
 	userHome := t.TempDir()
 	writeConfigFile(t, userHome, ".speecdex/config.yaml", `
 config:
+  only_entries:
+    - user-docs
   ignored_entries:
     - user.md
   service:
@@ -131,6 +137,8 @@ llms:
 `)
 	writeConfigFile(t, projectRoot, ".speecdex/config.yaml", `
 config:
+  ignored_entries:
+    - project.md
   indexing:
     chunk_overlap: 350
 `)
@@ -144,6 +152,8 @@ llms:
 	if got.Service.Port != 9002 {
 		t.Fatalf("Service.Port = %d, want inherited user port 9002", got.Service.Port)
 	}
+	assertStrings(t, got.OnlyEntries, []string{"user-docs"})
+	assertStrings(t, got.IgnoredEntries, []string{"project.md"})
 	if got.Indexing.ChunkSize != 1600 {
 		t.Fatalf("ChunkSize = %d, want inherited user size 1600", got.Indexing.ChunkSize)
 	}
@@ -162,6 +172,27 @@ llms:
 	if got.Embedding.APIKey != "user-secret" {
 		t.Fatalf("Embedding.APIKey = %q, want inherited user secret", got.Embedding.APIKey)
 	}
+}
+
+func TestLoadProjectOnlyEntriesOverridesUserOnlyEntries(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	writeConfigFile(t, userHome, ".speecdex/config.yaml", `
+config:
+  only_entries:
+    - user-docs
+`)
+	writeConfigFile(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  only_entries:
+    - project-docs
+    - "*/plans/*.md"
+`)
+
+	got := loadForTest(t, projectRoot, userHome)
+	assertStrings(t, got.OnlyEntries, []string{"project-docs", "*/plans/*.md"})
 }
 
 func TestLoadParsesOpenAICompatibleEmbeddingConfig(t *testing.T) {

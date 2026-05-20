@@ -242,6 +242,86 @@ config:
 	}
 }
 
+func TestRunIndexAppliesOnlyEntriesBeforeIgnoredEntries(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	requests := make(chan embeddingRequestCapture, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got embeddingRequestCapture
+		got.Path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&got.Body); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		requests <- got
+
+		data := make([]map[string]any, len(got.Body.Input))
+		for i := range got.Body.Input {
+			data[i] = map[string]any{
+				"index":     i,
+				"embedding": []float64{float64(i + 1), float64(i + 2)},
+			}
+		}
+		writeJSON(t, w, map[string]any{
+			"data":  data,
+			"model": "test-model",
+		})
+	}))
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  only_entries:
+    - docs
+  ignored_entries:
+    - docs/private
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, ".speecdex/included-never.md", "# Artifact\nshould not embed\n")
+	writeProjectFile(t, projectRoot, "docs/allowed.md", "# Allowed\nshould embed\n")
+	writeProjectFile(t, projectRoot, "docs/private/secret.md", "# Secret\nshould not embed\n")
+	writeProjectFile(t, projectRoot, "outside.md", "# Outside\nshould not embed\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stderr: %q", stderr.String())
+	}
+
+	gotRequest := <-requests
+	if len(gotRequest.Body.Input) != 1 || !strings.Contains(gotRequest.Body.Input[0], "should embed") {
+		t.Fatalf("embedding inputs = %#v, want only included non-ignored markdown", gotRequest.Body.Input)
+	}
+	joinedInput := strings.Join(gotRequest.Body.Input, "\n")
+	for _, unexpected := range []string{"Secret", "Outside", "Artifact"} {
+		if strings.Contains(joinedInput, unexpected) {
+			t.Fatalf("embedding inputs = %#v, did not expect %q", gotRequest.Body.Input, unexpected)
+		}
+	}
+
+	idx, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read() error = %v", err)
+	}
+	if len(idx.Sources) != 1 || idx.Sources[0].RelativePath != "docs/allowed.md" {
+		t.Fatalf("Sources = %#v, want only docs/allowed.md", idx.Sources)
+	}
+	if !reflect.DeepEqual(idx.Header.IgnoredEntries, []string{"docs/private"}) {
+		t.Fatalf("IgnoredEntries = %#v, want docs/private", idx.Header.IgnoredEntries)
+	}
+	if strings.Contains(stdout.String(), "Only entries") {
+		t.Fatalf("stdout = %q, did not expect only_entries summary", stdout.String())
+	}
+}
+
 func TestRunIndexRequiresEmbeddingConfig(t *testing.T) {
 	t.Parallel()
 

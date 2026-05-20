@@ -20,10 +20,25 @@ Matching is case-insensitive.
 Required behavior:
 
 - Traverse subdirectories recursively.
+- When `config.only_entries` is non-empty, include only Markdown files that match at least one configured entry.
 - Ignore configured entries before reading file contents.
 - Ignore the Speecdex data directory.
 - Use paths relative to the project root in stored metadata and output.
 - Process files in stable lexical order to keep index output reproducible.
+
+## Include-Only Rules
+
+Include-only rules come from `config.only_entries`.
+
+Required behavior:
+
+- Empty or omitted include-only rules include the full project tree.
+- Exact directory names include that directory and its children.
+- Exact file names include matching files.
+- Relative path patterns match from the project root.
+- Glob patterns support `*`.
+- Ignore rules apply after include-only rules, so ignored files must not be read, chunked, embedded, or stored even when they also match `only_entries`.
+- The Speecdex data directory is always ignored.
 
 ## Ignore Rules
 

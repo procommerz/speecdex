@@ -20,6 +20,7 @@ import (
 
 type Options struct {
 	ProjectRoot            string
+	OnlyEntries            []string
 	IgnoredEntries         []string
 	ChunkSize              int
 	ChunkOverlap           int
@@ -84,7 +85,11 @@ func DiscoverMarkdown(opts Options) (DiscoveryResult, error) {
 		return DiscoveryResult{}, &Error{Path: root, Message: "resolve project root", Err: err}
 	}
 
-	matcher, err := newIgnoreMatcher(opts.IgnoredEntries)
+	includeMatcher, err := newPathMatcher(opts.OnlyEntries, "config.only_entries", false)
+	if err != nil {
+		return DiscoveryResult{}, err
+	}
+	ignoreMatcher, err := newPathMatcher(opts.IgnoredEntries, "config.ignored_entries", true)
 	if err != nil {
 		return DiscoveryResult{}, err
 	}
@@ -105,7 +110,7 @@ func DiscoverMarkdown(opts Options) (DiscoveryResult, error) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		if matcher.Match(rel, entry.IsDir()) {
+		if ignoreMatcher.Match(rel, entry.IsDir()) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -113,6 +118,9 @@ func DiscoverMarkdown(opts Options) (DiscoveryResult, error) {
 		}
 
 		if entry.IsDir() || !isMarkdownPath(rel) {
+			return nil
+		}
+		if len(opts.OnlyEntries) > 0 && !includeMatcher.Match(rel, false) {
 			return nil
 		}
 
@@ -364,41 +372,42 @@ func writeHashPart(hash io.Writer, value string) {
 	_, _ = io.WriteString(hash, value)
 }
 
-type ignoreMatcher struct {
-	patterns []ignorePattern
+type pathMatcher struct {
+	patterns []pathPattern
 }
 
-type ignorePattern struct {
+type pathPattern struct {
 	raw     string
 	hasGlob bool
 	hasPath bool
 }
 
-func newIgnoreMatcher(entries []string) (ignoreMatcher, error) {
-	patterns := []ignorePattern{
-		{raw: ".speecdex", hasPath: false},
+func newPathMatcher(entries []string, field string, includeSpeecdex bool) (pathMatcher, error) {
+	var patterns []pathPattern
+	if includeSpeecdex {
+		patterns = append(patterns, pathPattern{raw: ".speecdex", hasPath: false})
 	}
 	for _, entry := range entries {
-		normalized := normalizeIgnoreEntry(entry)
+		normalized := normalizePathPatternEntry(entry)
 		if normalized == "" || normalized == "." {
 			continue
 		}
-		if err := validateIgnorePattern(normalized); err != nil {
-			return ignoreMatcher{}, &Error{
-				Message: fmt.Sprintf("invalid config.ignored_entries pattern %q", normalized),
+		if err := validatePathPattern(normalized); err != nil {
+			return pathMatcher{}, &Error{
+				Message: fmt.Sprintf("invalid %s pattern %q", field, normalized),
 				Err:     err,
 			}
 		}
-		patterns = append(patterns, ignorePattern{
+		patterns = append(patterns, pathPattern{
 			raw:     normalized,
 			hasGlob: strings.Contains(normalized, "*"),
 			hasPath: strings.Contains(normalized, "/"),
 		})
 	}
-	return ignoreMatcher{patterns: patterns}, nil
+	return pathMatcher{patterns: patterns}, nil
 }
 
-func (m ignoreMatcher) Match(rel string, isDir bool) bool {
+func (m pathMatcher) Match(rel string, isDir bool) bool {
 	rel = path.Clean(filepath.ToSlash(rel))
 	for _, pattern := range m.patterns {
 		if pattern.matches(rel, isDir) {
@@ -408,7 +417,7 @@ func (m ignoreMatcher) Match(rel string, isDir bool) bool {
 	return false
 }
 
-func (p ignorePattern) matches(rel string, isDir bool) bool {
+func (p pathPattern) matches(rel string, isDir bool) bool {
 	if p.hasGlob {
 		if ok, _ := path.Match(p.raw, rel); ok {
 			return true
@@ -435,7 +444,7 @@ func (p ignorePattern) matches(rel string, isDir bool) bool {
 	return isDir && path.Base(rel) == p.raw
 }
 
-func normalizeIgnoreEntry(entry string) string {
+func normalizePathPatternEntry(entry string) string {
 	entry = strings.TrimSpace(filepath.ToSlash(entry))
 	entry = strings.Trim(entry, "/")
 	if entry == "" {
@@ -444,7 +453,7 @@ func normalizeIgnoreEntry(entry string) string {
 	return path.Clean(entry)
 }
 
-func validateIgnorePattern(pattern string) error {
+func validatePathPattern(pattern string) error {
 	if !strings.ContainsAny(pattern, "*?[\\") {
 		return nil
 	}

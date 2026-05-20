@@ -113,6 +113,7 @@ func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io
 
 	discovery, err := indexing.DiscoverMarkdown(indexing.Options{
 		ProjectRoot:            absRoot,
+		OnlyEntries:            cfg.OnlyEntries,
 		IgnoredEntries:         cfg.IgnoredEntries,
 		ChunkSize:              cfg.Indexing.ChunkSize,
 		ChunkOverlap:           cfg.Indexing.ChunkOverlap,

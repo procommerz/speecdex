@@ -78,6 +78,42 @@ func TestDiscoverMarkdownAppliesIgnoreRules(t *testing.T) {
 	}
 }
 
+func TestDiscoverMarkdownAppliesOnlyEntriesBeforeIgnoreRules(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, ".speecdex/included-never.md", "artifact\n")
+	writeFile(t, root, "docs/keep.md", "keep\n")
+	writeFile(t, root, "docs/private/secret.md", "secret\n")
+	writeFile(t, root, "src/keep.md", "outside include\n")
+	writeFile(t, root, "release.md", "basename include\n")
+	writeFile(t, root, "notes.txt", "not markdown\n")
+
+	got, err := DiscoverMarkdown(Options{
+		ProjectRoot: root,
+		OnlyEntries: []string{
+			"docs",
+			"release.md",
+			".speecdex",
+		},
+		IgnoredEntries: []string{
+			"docs/private",
+		},
+	})
+	if err != nil {
+		t.Fatalf("DiscoverMarkdown() error = %v", err)
+	}
+
+	paths := filePaths(got.Files)
+	want := []string{"docs/keep.md", "release.md"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("paths = %#v, want %#v", paths, want)
+	}
+	if got.IgnoredEntriesCount != 1 {
+		t.Fatalf("IgnoredEntriesCount = %d, want 1", got.IgnoredEntriesCount)
+	}
+}
+
 func TestDiscoverMarkdownRejectsInvalidUTF8(t *testing.T) {
 	t.Parallel()
 
@@ -93,6 +129,24 @@ func TestDiscoverMarkdownRejectsInvalidUTF8(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bad.md") || !strings.Contains(err.Error(), "UTF-8") {
 		t.Fatalf("error = %q, want path and UTF-8 message", err.Error())
+	}
+}
+
+func TestDiscoverMarkdownRejectsMalformedOnlyEntriesGlob(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, "docs/keep.md", "keep\n")
+
+	_, err := DiscoverMarkdown(Options{
+		ProjectRoot: root,
+		OnlyEntries: []string{"docs/[unclosed"},
+	})
+	if err == nil {
+		t.Fatal("DiscoverMarkdown() error = nil, want malformed include pattern error")
+	}
+	if !strings.Contains(err.Error(), "config.only_entries") || !strings.Contains(err.Error(), "docs/[unclosed") {
+		t.Fatalf("error = %q, want config field and bad pattern", err.Error())
 	}
 }
 

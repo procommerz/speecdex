@@ -26,6 +26,9 @@ App config uses this top-level shape:
 
 ```yaml
 config:
+  only_entries:
+    - docs
+    - README.md
   ignored_entries:
     - .git
     - ignored.md
@@ -38,6 +41,19 @@ config:
 ```
 
 All fields are optional.
+
+### `config.only_entries`
+
+Optional list of path patterns that limit Markdown discovery before ignored entries are applied.
+
+When omitted or empty, Markdown discovery starts from the full project tree.
+
+Required behavior:
+
+- Match entries relative to the project root.
+- Support the same exact file names, exact directory names, slash-separated relative paths, and glob-style `*` matching as `config.ignored_entries`.
+- Apply before `config.ignored_entries`, so ignored entries still exclude files that match `only_entries`.
+- Still always ignore the local Speecdex data directory.
 
 ### `config.ignored_entries`
 
@@ -150,4 +166,3 @@ Configuration errors must:
 - Exit with code `2` only when the failure is caused by invalid CLI usage.
 
 Secrets such as API keys must never be printed in full.
-

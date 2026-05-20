@@ -27,6 +27,7 @@ Required scenarios:
 - Supports `.yaml` and `.yml`.
 - Uses `.yaml` over `.yml` in the same scope.
 - Applies project config over user config.
+- Parses `config.only_entries`.
 - Parses `config.ignored_entries`.
 - Parses OpenAI-compatible embedding config.
 - Parses GGUF embedding config.
@@ -39,7 +40,9 @@ Required scenarios:
 
 - Recursively finds `.md` and `.markdown` files.
 - Treats Markdown extensions case-insensitively.
+- Applies include-only `config.only_entries` before ignore rules.
 - Ignores `.git`, exact files, relative paths, and `*` glob patterns.
+- Always ignores `.speecdex`, even when matched by `only_entries`.
 - Normalizes line endings to `\n`.
 - Preserves 1-based inclusive line ranges.
 - Produces deterministic chunk IDs.
@@ -109,4 +112,3 @@ The MVP implementation is complete when:
 - Search output is valid fenced YAML.
 - The local service API is testable with fake or fixture embedding behavior.
 - No test depends on external network access or real user configuration.
-

@@ -25,6 +25,24 @@ Reindex markdown docs in the  current folder tree: `speecdex`
 Search in the index, semantic only: `speecdex --query "root business object definitions"`
 Search in the index semantic OR any text match: `speecdex --query "root business object definitions" --text "extends BusinessObject" --text "implements BusinessObject"`
 
+## App Configuration
+
+Speecdex reads optional app settings from `.speecdex/config.yaml` in the current
+project, inheriting missing values from `~/.speecdex/config.yaml`.
+
+Use `only_entries` to narrow Markdown discovery before ignores are applied, and
+`ignored_entries` to exclude matches afterward:
+
+```yaml
+config:
+  only_entries:
+    - docs
+    - README.md
+  ignored_entries:
+    - .git
+    - docs/private
+```
+
 ## Building
 
 Builds run inside Docker so the host machine does not need to execute the Go

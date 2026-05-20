@@ -25,6 +25,7 @@ type LoadOptions struct {
 }
 
 type Config struct {
+	OnlyEntries    []string
 	IgnoredEntries []string
 	Service        ServiceConfig
 	Indexing       IndexingConfig
@@ -177,6 +178,9 @@ func (s *state) loadAppConfig(path string) error {
 		return err
 	}
 
+	if doc.Config.OnlyEntries != nil {
+		s.config.OnlyEntries = append([]string(nil), (*doc.Config.OnlyEntries)...)
+	}
 	if doc.Config.IgnoredEntries != nil {
 		s.config.IgnoredEntries = append([]string(nil), (*doc.Config.IgnoredEntries)...)
 	}
@@ -363,6 +367,7 @@ type appDocument struct {
 }
 
 type rawAppConfig struct {
+	OnlyEntries    *[]string         `yaml:"only_entries"`
 	IgnoredEntries *[]string         `yaml:"ignored_entries"`
 	Service        rawServiceConfig  `yaml:"service"`
 	Indexing       rawIndexingConfig `yaml:"indexing"`
