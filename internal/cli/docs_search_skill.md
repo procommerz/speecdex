@@ -9,7 +9,7 @@ Use this skill when you need to find project documentation or specifications bef
 
 ## Workflow
 
-Check that the 
+Check that the indexed branch matches the current one using the command that will output the indexed branch:
 
 ```sh
 speecdex --show-branch
@@ -22,6 +22,10 @@ If the index is missing, stale, or search fails because the index cannot be read
 ```sh
 speecdex
 ```
+
+For large documentation full reindex might take up to 10 minutes. If there are many markdown files in the repo, confirm reindex with the user first.
+
+## Search
 
 Choose the search mode by intent:
 
