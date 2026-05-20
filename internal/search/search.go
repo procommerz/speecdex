@@ -79,6 +79,9 @@ func Run(ctx context.Context, idx storage.Index, opts Options, embedder Embedder
 	}
 
 	for _, chunk := range idx.Chunks {
+		if chunk.Deleted {
+			continue
+		}
 		matched := matchedTerms(chunk.Text, textTerms)
 		if len(matched) == 0 {
 			continue
@@ -106,6 +109,9 @@ func Run(ctx context.Context, idx storage.Index, opts Options, embedder Embedder
 func semanticCandidates(chunks []storage.Chunk, queryVector []float64, limit int) []scoredChunk {
 	scored := make([]scoredChunk, 0, len(chunks))
 	for _, chunk := range chunks {
+		if chunk.Deleted {
+			continue
+		}
 		scored = append(scored, scoredChunk{
 			chunk: chunk,
 			score: cosineSimilarity(queryVector, chunk.Vector),

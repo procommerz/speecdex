@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ type Options struct {
 	Query   string
 	Text    []string
 	Service bool
+	Force   bool
 }
 
 type textFlags []string
@@ -92,7 +94,7 @@ func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions
 
 	switch opts.Mode {
 	case ModeIndex:
-		return runIndex(cfg, loadOptions.ProjectRoot, stdout, stderr, now)
+		return runIndex(opts, cfg, loadOptions.ProjectRoot, stdout, stderr, now)
 	case ModeSearch:
 		return runSearch(opts, cfg, loadOptions.ProjectRoot, stdout, stderr)
 	case ModeService:
@@ -104,7 +106,7 @@ func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions
 	}
 }
 
-func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer, now func() time.Time) int {
+func runIndex(opts Options, cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer, now func() time.Time) int {
 	if cfg.Embedding == nil {
 		fmt.Fprintln(stderr, "indexing requires llms.embedding configuration")
 		return ExitRuntimeError
@@ -134,39 +136,7 @@ func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io
 		ChunkOverlap:           cfg.Indexing.ChunkOverlap,
 		EmbeddingModelIdentity: cfg.Embedding.ModelName,
 	}
-	filePlans := planFileChunks(discovery.Files, chunkOptions)
-	totalChunks := 0
-	for _, plan := range filePlans {
-		totalChunks += len(plan.Chunks)
-	}
-
-	embedder, err := newEmbedder(cfg)
-	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return ExitRuntimeError
-	}
-
-	progress := newIndexProgress(stderr, len(filePlans), totalChunks, now)
-	chunks := make([]indexing.Chunk, 0, totalChunks)
-	vectors := make([][]float64, 0, totalChunks)
-	for index, plan := range filePlans {
-		texts := make([]string, len(plan.Chunks))
-		for i, chunk := range plan.Chunks {
-			texts[i] = chunk.Text
-		}
-
-		fileVectors, err := embedder.Embed(context.Background(), texts)
-		if err != nil {
-			fmt.Fprintf(stderr, "embed chunks: %v\n", err)
-			return ExitRuntimeError
-		}
-
-		chunks = append(chunks, plan.Chunks...)
-		vectors = append(vectors, fileVectors...)
-		progress.Report(index+1, plan.File.RelativePath, len(plan.Chunks), len(chunks))
-	}
-
-	idx, err := storage.BuildIndex(storage.BuildOptions{
+	buildOptions := storage.BuildOptions{
 		ProjectRoot:            absRoot,
 		EmbeddingProviderStyle: cfg.Embedding.Style,
 		EmbeddingModelIdentity: cfg.Embedding.ModelName,
@@ -174,8 +144,51 @@ func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io
 		DistanceMetric:         storage.DistanceMetricCosine,
 		ChunkSize:              cfg.Indexing.ChunkSize,
 		ChunkOverlap:           cfg.Indexing.ChunkOverlap,
+		OnlyEntries:            cfg.OnlyEntries,
 		IgnoredEntries:         cfg.IgnoredEntries,
-	}, discovery.Files, chunks, vectors)
+	}
+	previous, hasPrevious := reusablePreviousIndex(absRoot, buildOptions, stderr)
+	plan := planIndexRebuild(discovery.Files, chunkOptions, previous, hasPrevious, opts.Force)
+
+	var embedder search.Embedder
+	progress := newIndexProgress(stderr, len(plan.Files), plan.ActiveChunkCount(), now)
+	chunks := make([]storage.Chunk, 0, plan.ActiveChunkCount()+len(plan.DeletedChunks))
+	indexedChunks := 0
+	for index, filePlan := range plan.Files {
+		fileChunks := filePlan.ReusedChunks
+		if len(filePlan.ChunksToEmbed) > 0 {
+			if embedder == nil {
+				embedder, err = newEmbedder(cfg)
+				if err != nil {
+					fmt.Fprintf(stderr, "%v\n", err)
+					return ExitRuntimeError
+				}
+			}
+			texts := make([]string, len(filePlan.ChunksToEmbed))
+			for i, chunk := range filePlan.ChunksToEmbed {
+				texts[i] = chunk.Text
+			}
+			fileVectors, err := embedder.Embed(context.Background(), texts)
+			if err != nil {
+				fmt.Fprintf(stderr, "embed chunks: %v\n", err)
+				return ExitRuntimeError
+			}
+			embedded, err := storageChunksForFile(filePlan.File, filePlan.ChunksToEmbed, fileVectors)
+			if err != nil {
+				fmt.Fprintf(stderr, "%v\n", err)
+				return ExitRuntimeError
+			}
+			fileChunks = embedded
+		}
+
+		chunks = append(chunks, fileChunks...)
+		indexedChunks += len(fileChunks)
+		progress.Report(index+1, filePlan.File.RelativePath, len(fileChunks), indexedChunks)
+	}
+	chunks = append(chunks, plan.DeletedChunks...)
+	sortStorageChunks(chunks)
+
+	idx, err := storage.BuildIndexFromRecords(buildOptions, plan.Sources, chunks)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return ExitRuntimeError
@@ -186,30 +199,173 @@ func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io
 		return ExitRuntimeError
 	}
 
+	fmt.Fprintf(stderr, "Index rebuild: reused %d chunks | embedded %d chunks | retained deleted %d chunks\n", plan.ReusedChunks, plan.EmbeddedChunks, plan.RetainedDeletedChunks)
 	fmt.Fprintf(stdout, "Project root: %s\n", absRoot)
 	fmt.Fprintf(stdout, "Markdown files discovered: %d\n", len(discovery.Files))
 	fmt.Fprintf(stdout, "Markdown files indexed: %d\n", len(discovery.Files))
-	fmt.Fprintf(stdout, "Chunks indexed: %d\n", len(chunks))
+	fmt.Fprintf(stdout, "Chunks indexed: %d\n", plan.ActiveChunkCount())
 	fmt.Fprintf(stdout, "Ignored entries: %d\n", discovery.IgnoredEntriesCount)
 	fmt.Fprintf(stdout, "Embedding provider: %s/%s\n", cfg.Embedding.Style, cfg.Embedding.ModelName)
 	fmt.Fprintf(stdout, "Index artifact: %s\n", storage.ArtifactPath(absRoot))
 	return ExitOK
 }
 
-type fileChunkPlan struct {
-	File   indexing.MarkdownFile
-	Chunks []indexing.Chunk
+type rebuildPlan struct {
+	Files                 []rebuildFilePlan
+	Sources               []storage.SourceFile
+	DeletedChunks         []storage.Chunk
+	ReusedChunks          int
+	EmbeddedChunks        int
+	RetainedDeletedChunks int
 }
 
-func planFileChunks(files []indexing.MarkdownFile, opts indexing.Options) []fileChunkPlan {
-	plans := make([]fileChunkPlan, len(files))
-	for i, file := range files {
-		plans[i] = fileChunkPlan{
-			File:   file,
-			Chunks: indexing.ChunkMarkdown(file, opts),
+type rebuildFilePlan struct {
+	File          indexing.MarkdownFile
+	ReusedChunks  []storage.Chunk
+	ChunksToEmbed []indexing.Chunk
+}
+
+func (p rebuildPlan) ActiveChunkCount() int {
+	return p.ReusedChunks + p.EmbeddedChunks
+}
+
+func reusablePreviousIndex(projectRoot string, opts storage.BuildOptions, stderr io.Writer) (storage.Index, bool) {
+	artifactPath := storage.ArtifactPath(projectRoot)
+	if _, err := os.Stat(artifactPath); err != nil {
+		return storage.Index{}, false
+	}
+
+	previous, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		fmt.Fprintf(stderr, "Index rebuild: previous index cannot be reused: %v\n", err)
+		return storage.Index{}, false
+	}
+	ok, err := storage.IsRebuildCompatible(previous.Header, opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "Index rebuild: previous index cannot be reused: %v\n", err)
+		return storage.Index{}, false
+	}
+	if !ok {
+		fmt.Fprintln(stderr, "Index rebuild: previous index cannot be reused: not compatible with active indexing configuration")
+		return storage.Index{}, false
+	}
+	return previous, true
+}
+
+func planIndexRebuild(files []indexing.MarkdownFile, opts indexing.Options, previous storage.Index, hasPrevious bool, force bool) rebuildPlan {
+	previousSources := map[string]storage.SourceFile{}
+	previousChunks := map[string][]storage.Chunk{}
+	if hasPrevious {
+		for _, source := range previous.Sources {
+			previousSources[source.RelativePath] = source
+		}
+		for _, chunk := range previous.Chunks {
+			previousChunks[chunk.SourcePath] = append(previousChunks[chunk.SourcePath], chunk)
 		}
 	}
-	return plans
+
+	seen := map[string]bool{}
+	plan := rebuildPlan{
+		Files:   make([]rebuildFilePlan, 0, len(files)),
+		Sources: make([]storage.SourceFile, 0, len(files)+len(previousSources)),
+	}
+	for _, file := range files {
+		seen[file.RelativePath] = true
+		source := storage.SourceFile{
+			RelativePath: file.RelativePath,
+			ContentHash:  file.ContentHash,
+			Size:         file.Size,
+			ModifiedAt:   file.ModifiedAt,
+		}
+		plan.Sources = append(plan.Sources, source)
+
+		previousSource, canReuse := previousSources[file.RelativePath]
+		reusableChunks := previousChunks[file.RelativePath]
+		canReuse = canReuse && !force && previousSource.ContentHash == file.ContentHash && len(reusableChunks) > 0
+		if canReuse {
+			reused := cloneStorageChunks(reusableChunks)
+			for i := range reused {
+				reused[i].ContentHash = file.ContentHash
+				reused[i].Deleted = false
+			}
+			sortStorageChunks(reused)
+			plan.Files = append(plan.Files, rebuildFilePlan{File: file, ReusedChunks: reused})
+			plan.ReusedChunks += len(reused)
+			continue
+		}
+
+		chunks := indexing.ChunkMarkdown(file, opts)
+		plan.Files = append(plan.Files, rebuildFilePlan{File: file, ChunksToEmbed: chunks})
+		plan.EmbeddedChunks += len(chunks)
+	}
+
+	if hasPrevious {
+		for _, source := range previous.Sources {
+			if seen[source.RelativePath] {
+				continue
+			}
+			source.Deleted = true
+			plan.Sources = append(plan.Sources, source)
+			deletedChunks := cloneStorageChunks(previousChunks[source.RelativePath])
+			for i := range deletedChunks {
+				deletedChunks[i].Deleted = true
+			}
+			plan.RetainedDeletedChunks += len(deletedChunks)
+			plan.DeletedChunks = append(plan.DeletedChunks, deletedChunks...)
+		}
+	}
+
+	sortStorageSources(plan.Sources)
+	return plan
+}
+
+func storageChunksForFile(file indexing.MarkdownFile, chunks []indexing.Chunk, vectors [][]float64) ([]storage.Chunk, error) {
+	if len(chunks) != len(vectors) {
+		return nil, fmt.Errorf("build index: got %d chunks and %d vectors", len(chunks), len(vectors))
+	}
+	out := make([]storage.Chunk, len(chunks))
+	for i, chunk := range chunks {
+		out[i] = storage.Chunk{
+			ID:          chunk.ID,
+			SourcePath:  chunk.SourcePath,
+			ContentHash: file.ContentHash,
+			StartLine:   chunk.StartLine,
+			EndLine:     chunk.EndLine,
+			Text:        chunk.Text,
+			Vector:      append([]float64(nil), vectors[i]...),
+		}
+	}
+	return out, nil
+}
+
+func cloneStorageChunks(chunks []storage.Chunk) []storage.Chunk {
+	out := make([]storage.Chunk, len(chunks))
+	for i, chunk := range chunks {
+		out[i] = chunk
+		out[i].Vector = append([]float64(nil), chunk.Vector...)
+	}
+	return out
+}
+
+func sortStorageSources(sources []storage.SourceFile) {
+	sort.SliceStable(sources, func(i, j int) bool {
+		return sources[i].RelativePath < sources[j].RelativePath
+	})
+}
+
+func sortStorageChunks(chunks []storage.Chunk) {
+	sort.SliceStable(chunks, func(i, j int) bool {
+		if chunks[i].SourcePath != chunks[j].SourcePath {
+			return chunks[i].SourcePath < chunks[j].SourcePath
+		}
+		if chunks[i].StartLine != chunks[j].StartLine {
+			return chunks[i].StartLine < chunks[j].StartLine
+		}
+		if chunks[i].EndLine != chunks[j].EndLine {
+			return chunks[i].EndLine < chunks[j].EndLine
+		}
+		return chunks[i].ID < chunks[j].ID
+	})
 }
 
 type indexProgress struct {
@@ -333,7 +489,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  speecdex")
+		fmt.Fprintln(stderr, "  speecdex [--force]")
 		fmt.Fprintln(stderr, "  speecdex --query <query> [--text <literal> ...]")
 		fmt.Fprintln(stderr, "  speecdex --text <literal> [--text <literal> ...]")
 		fmt.Fprintln(stderr, "  speecdex --service")
@@ -342,6 +498,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	flags.StringVar(&opts.Query, "query", "", "semantic search query")
 	flags.Var(&texts, "text", "literal text search term; may be repeated")
 	flags.BoolVar(&opts.Service, "service", false, "start the local embedding service")
+	flags.BoolVar(&opts.Force, "force", false, "rebuild current files without reusing checksum-matched chunks")
 
 	if err := flags.Parse(args); err != nil {
 		return Options{}, err
@@ -360,6 +517,9 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 
 	if opts.Service && (opts.Query != "" || len(opts.Text) > 0) {
 		return Options{}, usageError(stderr, flags, "--service cannot be combined with --query or --text")
+	}
+	if opts.Force && (opts.Service || opts.Query != "" || len(opts.Text) > 0) {
+		return Options{}, usageError(stderr, flags, "--force can only be used while indexing")
 	}
 
 	switch {

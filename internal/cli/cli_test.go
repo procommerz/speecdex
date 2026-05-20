@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"encoding/gob"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,10 +13,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/procommerz/speecdex-search/internal/config"
+	"github.com/procommerz/speecdex-search/internal/search"
 	"github.com/procommerz/speecdex-search/internal/storage"
 )
 
@@ -50,6 +54,11 @@ func TestParseSelectsModes(t *testing.T) {
 			name: "service selects service mode",
 			args: []string{"--service"},
 			want: Options{Mode: ModeService, Service: true},
+		},
+		{
+			name: "force keeps indexing mode",
+			args: []string{"--force"},
+			want: Options{Mode: ModeIndex, Force: true},
 		},
 	}
 
@@ -99,6 +108,16 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 			name:       "unknown flag is invalid",
 			args:       []string{"--unknown"},
 			wantStderr: "Usage:",
+		},
+		{
+			name:       "force rejects query",
+			args:       []string{"--force", "--query", "root"},
+			wantStderr: "--force can only be used while indexing",
+		},
+		{
+			name:       "force rejects service",
+			args:       []string{"--force", "--service"},
+			wantStderr: "--force can only be used while indexing",
 		},
 	}
 
@@ -392,6 +411,337 @@ config:
 	}
 }
 
+func TestRunIndexReusesUnchangedFilesByChecksum(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, recorder := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nunchanged\n")
+	writeProjectFile(t, projectRoot, "docs/b.md", "# Bravo\nunchanged\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("first Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 2 {
+		t.Fatalf("first embedding request count = %d, want 2", got)
+	}
+	first, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(first) error = %v", err)
+	}
+
+	recorder.ResetRequests()
+	stdout.Reset()
+	stderr.Reset()
+	code = runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("second Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 0 {
+		t.Fatalf("second embedding request count = %d, want 0", got)
+	}
+	second, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(second) error = %v", err)
+	}
+	if !reflect.DeepEqual(second.Chunks, first.Chunks) {
+		t.Fatalf("second chunks = %#v, want reused first chunks %#v", second.Chunks, first.Chunks)
+	}
+	if !strings.Contains(stderr.String(), "Index rebuild: reused 2 chunks | embedded 0 chunks | retained deleted 0 chunks") {
+		t.Fatalf("stderr = %q, want rebuild reuse diagnostic", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "previous index cannot be reused") {
+		t.Fatalf("stderr = %q, did not expect previous index warning for compatible reuse", stderr.String())
+	}
+}
+
+func TestRunIndexEmbedsOnlyChangedFiles(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, recorder := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nunchanged\n")
+	writeProjectFile(t, projectRoot, "docs/b.md", "# Bravo\nold\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("first Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	first, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(first) error = %v", err)
+	}
+	firstByPath := chunksByPath(first.Chunks)
+
+	writeProjectFile(t, projectRoot, "docs/b.md", "# Bravo\nchanged\n")
+	recorder.ResetRequests()
+	stdout.Reset()
+	stderr.Reset()
+	if code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("second Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+
+	requests := recorder.Requests()
+	if len(requests) != 1 || len(requests[0].Body.Input) != 1 {
+		t.Fatalf("embedding requests = %#v, want one changed file chunk", requests)
+	}
+	if !strings.Contains(requests[0].Body.Input[0], "changed") || strings.Contains(requests[0].Body.Input[0], "Alpha") {
+		t.Fatalf("embedding input = %#v, want only changed docs/b.md", requests[0].Body.Input)
+	}
+	second, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(second) error = %v", err)
+	}
+	secondByPath := chunksByPath(second.Chunks)
+	if !reflect.DeepEqual(secondByPath["docs/a.md"].Vector, firstByPath["docs/a.md"].Vector) {
+		t.Fatalf("docs/a.md vector = %#v, want reused %#v", secondByPath["docs/a.md"].Vector, firstByPath["docs/a.md"].Vector)
+	}
+	if reflect.DeepEqual(secondByPath["docs/b.md"].Vector, firstByPath["docs/b.md"].Vector) {
+		t.Fatalf("docs/b.md vector = %#v, want reembedded vector", secondByPath["docs/b.md"].Vector)
+	}
+	if !strings.Contains(stderr.String(), "Index rebuild: reused 1 chunks | embedded 1 chunks | retained deleted 0 chunks") {
+		t.Fatalf("stderr = %q, want partial rebuild diagnostic", stderr.String())
+	}
+}
+
+func TestRunIndexMarksDeletedFilesAndUndeletesRestoredSameChecksum(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, recorder := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	contents := "# Alpha\nrestore me\n"
+	writeProjectFile(t, projectRoot, "docs/a.md", contents)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("first Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	first, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(first) error = %v", err)
+	}
+	firstChunk := first.Chunks[0]
+
+	if err := os.Remove(filepath.Join(projectRoot, "docs/a.md")); err != nil {
+		t.Fatalf("Remove(docs/a.md) error = %v", err)
+	}
+	recorder.ResetRequests()
+	stdout.Reset()
+	stderr.Reset()
+	if code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("deleted Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 0 {
+		t.Fatalf("deleted embedding request count = %d, want 0", got)
+	}
+	deleted, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(deleted) error = %v", err)
+	}
+	if len(deleted.Sources) != 1 || !deleted.Sources[0].Deleted || len(deleted.Chunks) != 1 || !deleted.Chunks[0].Deleted {
+		t.Fatalf("deleted index = %#v, want deleted source and chunk", deleted)
+	}
+	results, err := search.Run(context.Background(), deleted, search.Options{Text: []string{"restore me"}}, nil)
+	if err != nil {
+		t.Fatalf("search.Run(deleted) error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("deleted search results = %#v, want none", results)
+	}
+
+	writeProjectFile(t, projectRoot, "docs/a.md", contents)
+	recorder.ResetRequests()
+	stdout.Reset()
+	stderr.Reset()
+	if code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("restored Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 0 {
+		t.Fatalf("restored embedding request count = %d, want 0", got)
+	}
+	restored, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(restored) error = %v", err)
+	}
+	if restored.Sources[0].Deleted || restored.Chunks[0].Deleted {
+		t.Fatalf("restored index = %#v, want undeleted source and chunk", restored)
+	}
+	if restored.Chunks[0].ID != firstChunk.ID || !reflect.DeepEqual(restored.Chunks[0].Vector, firstChunk.Vector) {
+		t.Fatalf("restored chunk = %#v, want reused chunk %#v", restored.Chunks[0], firstChunk)
+	}
+}
+
+func TestRunIndexForceReembedsCurrentFiles(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, recorder := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nsame text\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("first Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	first, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(first) error = %v", err)
+	}
+
+	recorder.ResetRequests()
+	stdout.Reset()
+	stderr.Reset()
+	if code := runForTest(t, []string{"--force"}, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("force Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 1 {
+		t.Fatalf("force embedding request count = %d, want 1", got)
+	}
+	forced, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read(forced) error = %v", err)
+	}
+	if forced.Chunks[0].ID != first.Chunks[0].ID {
+		t.Fatalf("forced chunk ID = %q, want deterministic unchanged ID %q", forced.Chunks[0].ID, first.Chunks[0].ID)
+	}
+	if reflect.DeepEqual(forced.Chunks[0].Vector, first.Chunks[0].Vector) {
+		t.Fatalf("forced vector = %#v, want reembedded vector different from %#v", forced.Chunks[0].Vector, first.Chunks[0].Vector)
+	}
+	if !strings.Contains(stderr.String(), "Index rebuild: reused 0 chunks | embedded 1 chunks | retained deleted 0 chunks") {
+		t.Fatalf("stderr = %q, want force rebuild diagnostic", stderr.String())
+	}
+}
+
+func TestRunIndexWarnsAndRebuildsWhenPreviousIndexVersionIsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, recorder := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nfresh rebuild\n")
+	writeUnsupportedVersionIndex(t, projectRoot)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 1 {
+		t.Fatalf("embedding request count = %d, want full rebuild embedding request", got)
+	}
+	gotStderr := stderr.String()
+	if !strings.Contains(gotStderr, "previous index cannot be reused") ||
+		!strings.Contains(gotStderr, "unsupported index format version 1") {
+		t.Fatalf("stderr = %q, want unsupported version reuse warning", gotStderr)
+	}
+	if !strings.Contains(gotStderr, "Index rebuild: reused 0 chunks | embedded 1 chunks | retained deleted 0 chunks") {
+		t.Fatalf("stderr = %q, want full rebuild diagnostic", gotStderr)
+	}
+}
+
+func TestRunIndexWarnsAndRebuildsWhenPreviousIndexConfigIsIncompatible(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, recorder := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nsame content\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome); code != ExitOK {
+		t.Fatalf("first Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 180
+    chunk_overlap: 20
+`)
+	recorder.ResetRequests()
+	stdout.Reset()
+	stderr.Reset()
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("second Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 1 {
+		t.Fatalf("embedding request count = %d, want full rebuild embedding request", got)
+	}
+	gotStderr := stderr.String()
+	if !strings.Contains(gotStderr, "previous index cannot be reused: not compatible with active indexing configuration") {
+		t.Fatalf("stderr = %q, want incompatible config reuse warning", gotStderr)
+	}
+	if !strings.Contains(gotStderr, "Index rebuild: reused 0 chunks | embedded 1 chunks | retained deleted 0 chunks") {
+		t.Fatalf("stderr = %q, want full rebuild diagnostic", gotStderr)
+	}
+}
+
 func TestRunIndexRequiresEmbeddingConfig(t *testing.T) {
 	t.Parallel()
 
@@ -655,6 +1005,9 @@ func assertOptions(t *testing.T, got Options, want Options) {
 	if got.Service != want.Service {
 		t.Fatalf("Service = %t, want %t", got.Service, want.Service)
 	}
+	if got.Force != want.Force {
+		t.Fatalf("Force = %t, want %t", got.Force, want.Force)
+	}
 	if len(got.Text) != len(want.Text) {
 		t.Fatalf("Text length = %d, want %d; got %#v", len(got.Text), len(want.Text), got.Text)
 	}
@@ -755,6 +1108,106 @@ func writeSearchIndex(t *testing.T, root string, chunks []storage.Chunk, modelNa
 	if err := storage.Write(root, idx); err != nil {
 		t.Fatalf("storage.Write() error = %v", err)
 	}
+}
+
+func writeUnsupportedVersionIndex(t *testing.T, root string) {
+	t.Helper()
+
+	idx := storage.Index{
+		Header: storage.Header{
+			FormatName:             storage.FormatName,
+			FormatVersion:          1,
+			CreatedAt:              time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC),
+			EmbeddingProviderStyle: "openai-compatible",
+			EmbeddingModelIdentity: "test-model",
+			EmbeddingDimensions:    2,
+			DistanceMetric:         storage.DistanceMetricCosine,
+			ChunkSize:              200,
+			ChunkOverlap:           20,
+		},
+	}
+	path := storage.ArtifactPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(index dir) error = %v", err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create(index) error = %v", err)
+	}
+	defer file.Close()
+	if err := gob.NewEncoder(file).Encode(idx); err != nil {
+		t.Fatalf("Encode(index) error = %v", err)
+	}
+}
+
+type embeddingRecorder struct {
+	mu       sync.Mutex
+	requests []embeddingRequestCapture
+	next     float64
+}
+
+func newEmbeddingRecorder(t *testing.T) (*httptest.Server, *embeddingRecorder) {
+	t.Helper()
+
+	recorder := &embeddingRecorder{next: 1}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got embeddingRequestCapture
+		got.Path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&got.Body); err != nil {
+			t.Errorf("Decode() error = %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		recorder.mu.Lock()
+		recorder.requests = append(recorder.requests, got)
+		data := make([]map[string]any, len(got.Body.Input))
+		for i := range got.Body.Input {
+			value := recorder.next
+			recorder.next++
+			data[i] = map[string]any{
+				"index":     i,
+				"embedding": []float64{value, value + 0.5},
+			}
+		}
+		recorder.mu.Unlock()
+
+		writeJSON(t, w, map[string]any{
+			"data":  data,
+			"model": "test-model",
+		})
+	}))
+	return server, recorder
+}
+
+func (r *embeddingRecorder) ResetRequests() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.requests = nil
+}
+
+func (r *embeddingRecorder) RequestCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.requests)
+}
+
+func (r *embeddingRecorder) Requests() []embeddingRequestCapture {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]embeddingRequestCapture, len(r.requests))
+	copy(out, r.requests)
+	return out
+}
+
+func chunksByPath(chunks []storage.Chunk) map[string]storage.Chunk {
+	out := make(map[string]storage.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		if !chunk.Deleted {
+			out[chunk.SourcePath] = chunk
+		}
+	}
+	return out
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, value any) {

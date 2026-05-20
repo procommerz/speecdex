@@ -14,7 +14,7 @@ import (
 
 const (
 	FormatName             = "speecdex-index"
-	FormatVersion          = 1
+	FormatVersion          = 2
 	DefaultArtifactRelPath = ".speecdex/index.bin"
 	DistanceMetricCosine   = "cosine"
 	speecdexDataDirName    = ".speecdex"
@@ -38,6 +38,7 @@ type Header struct {
 	DistanceMetric         string
 	ChunkSize              int
 	ChunkOverlap           int
+	OnlyEntries            []string
 	IgnoredEntries         []string
 }
 
@@ -46,15 +47,18 @@ type SourceFile struct {
 	ContentHash  string
 	Size         int64
 	ModifiedAt   time.Time
+	Deleted      bool
 }
 
 type Chunk struct {
-	ID         string
-	SourcePath string
-	StartLine  int
-	EndLine    int
-	Text       string
-	Vector     []float64
+	ID          string
+	SourcePath  string
+	ContentHash string
+	StartLine   int
+	EndLine     int
+	Text        string
+	Vector      []float64
+	Deleted     bool
 }
 
 type ReadOptions struct {
@@ -76,6 +80,7 @@ type BuildOptions struct {
 	DistanceMetric         string
 	ChunkSize              int
 	ChunkOverlap           int
+	OnlyEntries            []string
 	IgnoredEntries         []string
 }
 
@@ -111,6 +116,39 @@ func BuildIndex(opts BuildOptions, files []indexing.MarkdownFile, chunks []index
 		return Index{}, &Error{Message: fmt.Sprintf("build index: got %d chunks and %d vectors", len(chunks), len(vectors))}
 	}
 
+	sources := make([]SourceFile, len(files))
+	sourceHashes := make(map[string]string, len(files))
+	for i, file := range files {
+		sources[i] = SourceFile{
+			RelativePath: file.RelativePath,
+			ContentHash:  file.ContentHash,
+			Size:         file.Size,
+			ModifiedAt:   file.ModifiedAt,
+		}
+		sourceHashes[file.RelativePath] = file.ContentHash
+	}
+	storedChunks := make([]Chunk, len(chunks))
+	for i, chunk := range chunks {
+		vector := append([]float64(nil), vectors[i]...)
+		contentHash, ok := sourceHashes[chunk.SourcePath]
+		if !ok {
+			return Index{}, &Error{Message: fmt.Sprintf("build index: chunk %s source %q is missing", chunk.ID, chunk.SourcePath)}
+		}
+		storedChunks[i] = Chunk{
+			ID:          chunk.ID,
+			SourcePath:  chunk.SourcePath,
+			ContentHash: contentHash,
+			StartLine:   chunk.StartLine,
+			EndLine:     chunk.EndLine,
+			Text:        chunk.Text,
+			Vector:      vector,
+		}
+	}
+
+	return BuildIndexFromRecords(opts, sources, storedChunks)
+}
+
+func BuildIndexFromRecords(opts BuildOptions, sources []SourceFile, chunks []Chunk) (Index, error) {
 	header, err := newHeader(opts)
 	if err != nil {
 		return Index{}, err
@@ -118,34 +156,12 @@ func BuildIndex(opts BuildOptions, files []indexing.MarkdownFile, chunks []index
 
 	idx := Index{
 		Header:  header,
-		Sources: make([]SourceFile, len(files)),
-		Chunks:  make([]Chunk, len(chunks)),
+		Sources: cloneSources(sources),
+		Chunks:  cloneChunks(chunks),
 	}
-	for i, file := range files {
-		idx.Sources[i] = SourceFile{
-			RelativePath: file.RelativePath,
-			ContentHash:  file.ContentHash,
-			Size:         file.Size,
-			ModifiedAt:   file.ModifiedAt,
-		}
+	if err := validateChunkVectors(idx); err != nil {
+		return Index{}, err
 	}
-	for i, chunk := range chunks {
-		vector := append([]float64(nil), vectors[i]...)
-		if len(vector) != header.EmbeddingDimensions {
-			return Index{}, &Error{
-				Message: fmt.Sprintf("build index: chunk %s vector has %d dimensions, want %d", chunk.ID, len(vector), header.EmbeddingDimensions),
-			}
-		}
-		idx.Chunks[i] = Chunk{
-			ID:         chunk.ID,
-			SourcePath: chunk.SourcePath,
-			StartLine:  chunk.StartLine,
-			EndLine:    chunk.EndLine,
-			Text:       chunk.Text,
-			Vector:     vector,
-		}
-	}
-
 	return idx, nil
 }
 
@@ -236,6 +252,29 @@ func ValidateCompatibility(header Header, opts CompatibilityOptions) error {
 	return nil
 }
 
+func IsRebuildCompatible(header Header, opts BuildOptions) (bool, error) {
+	if err := validateHeader(header); err != nil {
+		return false, err
+	}
+	identity, err := projectRootIdentity(opts.ProjectRoot)
+	if err != nil {
+		return false, err
+	}
+	distanceMetric := opts.DistanceMetric
+	if distanceMetric == "" {
+		distanceMetric = DistanceMetricCosine
+	}
+	return header.ProjectRootIdentity == identity &&
+		header.EmbeddingProviderStyle == opts.EmbeddingProviderStyle &&
+		header.EmbeddingModelIdentity == opts.EmbeddingModelIdentity &&
+		header.EmbeddingDimensions == opts.EmbeddingDimensions &&
+		header.DistanceMetric == distanceMetric &&
+		header.ChunkSize == opts.ChunkSize &&
+		header.ChunkOverlap == opts.ChunkOverlap &&
+		stringSlicesEqual(header.OnlyEntries, normalizedEntries(opts.OnlyEntries)) &&
+		stringSlicesEqual(header.IgnoredEntries, normalizedEntries(opts.IgnoredEntries)), nil
+}
+
 func prepareForWrite(projectRoot string, idx Index) (Index, error) {
 	header := idx.Header
 	if header.FormatName == "" {
@@ -257,7 +296,8 @@ func prepareForWrite(projectRoot string, idx Index) (Index, error) {
 	if header.DistanceMetric == "" {
 		header.DistanceMetric = DistanceMetricCosine
 	}
-	header.IgnoredEntries = normalizedIgnoredEntries(header.IgnoredEntries)
+	header.OnlyEntries = normalizedEntries(header.OnlyEntries)
+	header.IgnoredEntries = normalizedEntries(header.IgnoredEntries)
 	idx.Header = header
 	if err := validateHeader(idx.Header); err != nil {
 		return Index{}, err
@@ -292,7 +332,8 @@ func newHeader(opts BuildOptions) (Header, error) {
 		DistanceMetric:         distanceMetric,
 		ChunkSize:              opts.ChunkSize,
 		ChunkOverlap:           opts.ChunkOverlap,
-		IgnoredEntries:         normalizedIgnoredEntries(opts.IgnoredEntries),
+		OnlyEntries:            normalizedEntries(opts.OnlyEntries),
+		IgnoredEntries:         normalizedEntries(opts.IgnoredEntries),
 	}
 	if err := validateHeader(header); err != nil {
 		return Header{}, err
@@ -343,10 +384,35 @@ func projectRootIdentity(projectRoot string) (string, error) {
 	return filepath.Clean(absRoot), nil
 }
 
-func normalizedIgnoredEntries(entries []string) []string {
+func normalizedEntries(entries []string) []string {
 	normalized := append([]string(nil), entries...)
 	sort.Strings(normalized)
 	return normalized
+}
+
+func cloneSources(sources []SourceFile) []SourceFile {
+	return append([]SourceFile(nil), sources...)
+}
+
+func cloneChunks(chunks []Chunk) []Chunk {
+	out := make([]Chunk, len(chunks))
+	for i, chunk := range chunks {
+		out[i] = chunk
+		out[i].Vector = append([]float64(nil), chunk.Vector...)
+	}
+	return out
+}
+
+func stringSlicesEqual(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func syncDirectory(path string) error {

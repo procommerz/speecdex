@@ -278,10 +278,16 @@ func TestBuildIndexConvertsIndexingDataAndValidatesVectors(t *testing.T) {
 	if !reflect.DeepEqual(got.Header.IgnoredEntries, []string{"a", "z"}) {
 		t.Fatalf("IgnoredEntries = %#v, want sorted list", got.Header.IgnoredEntries)
 	}
+	if !reflect.DeepEqual(got.Header.OnlyEntries, []string(nil)) {
+		t.Fatalf("OnlyEntries = %#v, want empty list", got.Header.OnlyEntries)
+	}
 	if got.Sources[0].ModifiedAt != modifiedAt || got.Sources[0].ContentHash != "hash" {
 		t.Fatalf("Source = %#v, want indexing metadata", got.Sources[0])
 	}
-	if got.Chunks[0].Text != "chunk text" || !reflect.DeepEqual(got.Chunks[0].Vector, []float64{0.1, 0.2}) {
+	if got.Chunks[0].Text != "chunk text" ||
+		got.Chunks[0].ContentHash != "hash" ||
+		got.Chunks[0].Deleted ||
+		!reflect.DeepEqual(got.Chunks[0].Vector, []float64{0.1, 0.2}) {
 		t.Fatalf("Chunk = %#v, want chunk text and vector", got.Chunks[0])
 	}
 
@@ -295,6 +301,81 @@ func TestBuildIndexConvertsIndexingDataAndValidatesVectors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "has 2 dimensions, want 3") {
 		t.Fatalf("BuildIndex() error = %q, want dimension mismatch", err.Error())
+	}
+}
+
+func TestBuildIndexFromRecordsPreservesDeletedMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	idx, err := BuildIndexFromRecords(BuildOptions{
+		ProjectRoot:            root,
+		EmbeddingProviderStyle: "openai-compatible",
+		EmbeddingModelIdentity: "test-model",
+		EmbeddingDimensions:    2,
+		ChunkSize:              1200,
+		ChunkOverlap:           200,
+		OnlyEntries:            []string{"docs"},
+		IgnoredEntries:         []string{"z", "a"},
+	}, []SourceFile{{
+		RelativePath: "docs/deleted.md",
+		ContentHash:  "deleted-hash",
+		Deleted:      true,
+	}}, []Chunk{{
+		ID:          "deleted-chunk",
+		SourcePath:  "docs/deleted.md",
+		ContentHash: "deleted-hash",
+		StartLine:   1,
+		EndLine:     1,
+		Text:        "deleted text",
+		Vector:      []float64{0.1, 0.2},
+		Deleted:     true,
+	}})
+	if err != nil {
+		t.Fatalf("BuildIndexFromRecords() error = %v", err)
+	}
+
+	if !idx.Sources[0].Deleted || !idx.Chunks[0].Deleted || idx.Chunks[0].ContentHash != "deleted-hash" {
+		t.Fatalf("deleted metadata not preserved: %#v %#v", idx.Sources[0], idx.Chunks[0])
+	}
+	if !reflect.DeepEqual(idx.Header.OnlyEntries, []string{"docs"}) || !reflect.DeepEqual(idx.Header.IgnoredEntries, []string{"a", "z"}) {
+		t.Fatalf("header entries = only %#v ignored %#v, want normalized entries", idx.Header.OnlyEntries, idx.Header.IgnoredEntries)
+	}
+}
+
+func TestIsRebuildCompatibleChecksIndexingInputs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	opts := BuildOptions{
+		ProjectRoot:            root,
+		EmbeddingProviderStyle: "openai-compatible",
+		EmbeddingModelIdentity: "test-model",
+		EmbeddingDimensions:    2,
+		DistanceMetric:         DistanceMetricCosine,
+		ChunkSize:              1200,
+		ChunkOverlap:           200,
+		OnlyEntries:            []string{"docs"},
+		IgnoredEntries:         []string{"private"},
+	}
+	idx, err := BuildIndexFromRecords(opts, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildIndexFromRecords() error = %v", err)
+	}
+
+	ok, err := IsRebuildCompatible(idx.Header, opts)
+	if err != nil || !ok {
+		t.Fatalf("IsRebuildCompatible() = %t, %v; want compatible", ok, err)
+	}
+
+	changed := opts
+	changed.OnlyEntries = []string{"README.md"}
+	ok, err = IsRebuildCompatible(idx.Header, changed)
+	if err != nil {
+		t.Fatalf("IsRebuildCompatible(changed) error = %v", err)
+	}
+	if ok {
+		t.Fatal("IsRebuildCompatible(changed only_entries) = true, want false")
 	}
 }
 
@@ -317,6 +398,7 @@ func sampleIndex(t *testing.T, root string) Index {
 			DistanceMetric:         DistanceMetricCosine,
 			ChunkSize:              1200,
 			ChunkOverlap:           200,
+			OnlyEntries:            []string{"docs"},
 			IgnoredEntries:         []string{".git"},
 		},
 		Sources: []SourceFile{{
@@ -326,12 +408,13 @@ func sampleIndex(t *testing.T, root string) Index {
 			ModifiedAt:   time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC),
 		}},
 		Chunks: []Chunk{{
-			ID:         "chunk-1",
-			SourcePath: "docs/example.md",
-			StartLine:  1,
-			EndLine:    4,
-			Text:       "# Example\n\nChunk text",
-			Vector:     []float64{0.1, 0.2, 0.3},
+			ID:          "chunk-1",
+			SourcePath:  "docs/example.md",
+			ContentHash: "abc123",
+			StartLine:   1,
+			EndLine:     4,
+			Text:        "# Example\n\nChunk text",
+			Vector:      []float64{0.1, 0.2, 0.3},
 		}},
 	}
 }

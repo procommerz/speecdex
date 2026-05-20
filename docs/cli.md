@@ -10,17 +10,30 @@ The CLI uses the current working directory as the project root for indexing and 
 
 ### `speecdex`
 
-Rebuild the local index for the current folder tree.
+Rebuild the local index for the current folder tree, reusing unchanged file chunks from a compatible previous index when possible.
 
 Required behavior:
 
 - Run indexing mode when no `--query`, `--text`, or `--service` flag is provided.
 - Print line-oriented indexing progress to stderr while files are processed.
 - Read configuration before discovery.
-- Discover, chunk, embed, and store indexed chunks.
+- Discover Markdown files, compare file content checksums to a compatible previous index, and only rechunk/reembed current files whose checksum changed or whose chunks are missing.
+- Preserve chunks for deleted source files as deleted index records; deleted chunks must not appear in search results.
+- Print checksum rebuild diagnostics to stderr, including reused, embedded, and retained-deleted chunk counts.
 - Print a concise indexing summary to stdout.
 - Print diagnostics and recoverable warnings to stderr.
 - Exit with code `0` only after the index artifact is written successfully.
+
+### `speecdex --force`
+
+Rebuild the local index for the current folder tree without reusing checksum-matched chunks for currently discovered files.
+
+Required behavior:
+
+- Ignore previous checksums for currently discovered files.
+- Rechunk and reembed all currently discovered Markdown files.
+- Preserve deleted chunks for files that are still missing.
+- Exit with code `2` if combined with `--query`, `--text`, or `--service`.
 
 Summary output must include:
 
@@ -89,6 +102,7 @@ Required behavior:
 ## Flag Rules
 
 - `--service` is mutually exclusive with indexing and search flags.
+- `--force` is valid only for indexing.
 - `--query` requires a non-empty value after trimming whitespace.
 - `--text` may be repeated.
 - Empty `--text` values are invalid.

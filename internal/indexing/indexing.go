@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/procommerz/speecdex-search/internal/config"
@@ -188,8 +189,11 @@ func ChunkMarkdown(file MarkdownFile, opts Options) []Chunk {
 
 		end := chooseChunkEnd(lines, i, chunkSize)
 		text := chunkText(lines[i:end])
-		if strings.TrimSpace(text) != "" {
+		if isMeaningfulChunkText(text) {
 			chunks = append(chunks, newChunk(file.RelativePath, i+1, end, text, opts.EmbeddingModelIdentity))
+		} else {
+			i = end
+			continue
 		}
 
 		if end >= len(lines) {
@@ -309,7 +313,7 @@ func splitLongLine(sourcePath string, lineNumber int, text string, chunkSize int
 			end = len(runes)
 		}
 		part := string(runes[start:end])
-		if strings.TrimSpace(part) != "" {
+		if isMeaningfulChunkText(part) {
 			chunks = append(chunks, newChunk(sourcePath, lineNumber, lineNumber, part, modelIdentity))
 		}
 		if end == len(runes) {
@@ -326,6 +330,15 @@ func chunkText(lines []string) string {
 
 func chunkTextLen(lines []string) int {
 	return runeLen(chunkText(lines))
+}
+
+func isMeaningfulChunkText(text string) bool {
+	for _, r := range strings.TrimSpace(text) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func runeLen(text string) int {

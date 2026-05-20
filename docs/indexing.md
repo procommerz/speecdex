@@ -4,7 +4,7 @@
 
 Running `speecdex` with no search or service flags rebuilds the local index for the current working directory tree.
 
-Indexing is a full rebuild for MVP. Incremental indexing may be added later but is not required.
+By default, indexing performs an intelligent rebuild against a compatible existing index. Files whose normalized content checksum is unchanged reuse their stored chunks and vectors. Files whose checksum changed are rechunked and reembedded. Running `speecdex --force` disables checksum reuse for currently discovered files.
 
 ## Markdown Discovery
 
@@ -93,7 +93,20 @@ Required behavior:
 - Use the embedding model identity and dimensions from configuration.
 - Validate that returned vector dimensions match the configured dimensions.
 - Fail the indexing run if any chunk cannot be embedded.
+- Do not call the embedding provider for chunks reused from an unchanged file checksum.
 - Write the index only after all files and chunks have been processed successfully.
+
+## Deleted Source Files
+
+When a source Markdown file that existed in a compatible previous index is no longer discovered, indexing preserves its existing chunks and source checksum but marks the source and chunks as deleted.
+
+Required behavior:
+
+- Deleted chunks must remain in the index artifact with their original checksum and vector.
+- Deleted chunks must not be included in semantic or literal search.
+- If the same relative path is later discovered with the same checksum, indexing must undelete and reuse those chunks without rechunking or reembedding.
+- If the same relative path is later discovered with a different checksum, indexing must discard the old deleted chunks and rechunk/reembed the current file.
+- `--force` must rechunk/reembed restored current files even when the checksum matches, while still preserving chunks for files that remain missing.
 
 ## Progress
 
@@ -129,3 +142,5 @@ Required fields:
 - Index artifact path.
 
 Warnings, such as ignored unreadable directories, print to stderr.
+
+Checksum rebuild diagnostics, including reused, embedded, and retained-deleted chunk counts, print to stderr.

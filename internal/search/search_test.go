@@ -104,6 +104,31 @@ func TestCombinedSearchDeduplicatesAndPreservesSources(t *testing.T) {
 	}
 }
 
+func TestSearchSkipsDeletedChunks(t *testing.T) {
+	t.Parallel()
+
+	idx := testIndex(3)
+	idx.Chunks[0].Text = "semantic and literal match"
+	idx.Chunks[0].Deleted = true
+	idx.Chunks[1].Text = "literal match"
+	idx.Chunks[2].Text = "semantic only"
+
+	got, err := Run(context.Background(), idx, Options{
+		Query: "root",
+		Text:  []string{"literal match"},
+		Limit: 3,
+	}, &fakeEmbedder{vectors: [][]float64{{1, 0}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	for _, result := range got {
+		if result.ChunkID == "chunk-00" {
+			t.Fatalf("deleted chunk returned in results: %#v", got)
+		}
+	}
+}
+
 func TestSearchTieBreaksByPathLineAndChunkID(t *testing.T) {
 	t.Parallel()
 

@@ -251,6 +251,63 @@ func TestChunkMarkdownHandlesManyShortHeadingSections(t *testing.T) {
 	}
 }
 
+func TestChunkMarkdownDiscardsStandaloneTableSeparatorBeforeLongRow(t *testing.T) {
+	t.Parallel()
+
+	file := MarkdownFile{
+		RelativePath: "docs/changelog.md",
+		Text: strings.Join([]string{
+			"---",
+			"",
+			"## Changelog",
+			"",
+			"| Date | Change |",
+			"|---|---|",
+			"| 2026-05-11 | " + strings.Repeat("Spec sweep pass changed behavior. ", 8) + "|",
+		}, "\n"),
+	}
+
+	chunks := ChunkMarkdown(file, Options{ChunkSize: 24, ChunkOverlap: 8})
+	if len(chunks) == 0 {
+		t.Fatal("len(chunks) = 0, want chunks with meaningful changelog content")
+	}
+	for _, chunk := range chunks {
+		if strings.TrimSpace(chunk.Text) == "|---|---|" {
+			t.Fatalf("got standalone table separator chunk: %#v", chunk)
+		}
+		if !isMeaningfulChunkText(chunk.Text) {
+			t.Fatalf("got meaningless chunk: %#v", chunk)
+		}
+	}
+}
+
+func TestChunkMarkdownDiscardsPunctuationOnlyChunks(t *testing.T) {
+	t.Parallel()
+
+	file := MarkdownFile{
+		RelativePath: "docs/punctuation.md",
+		Text: strings.Join([]string{
+			"---",
+			"|---|---|",
+			"{}",
+			"| 2026-05-11 | Change |",
+		}, "\n"),
+	}
+
+	chunks := ChunkMarkdown(file, Options{ChunkSize: 20, ChunkOverlap: 0})
+	if len(chunks) == 0 {
+		t.Fatal("len(chunks) = 0, want alphanumeric table row chunk")
+	}
+	for _, chunk := range chunks {
+		if !isMeaningfulChunkText(chunk.Text) {
+			t.Fatalf("got punctuation-only chunk: %#v", chunk)
+		}
+	}
+	if !strings.Contains(chunkTextFromChunks(chunks), "2026") && !strings.Contains(chunkTextFromChunks(chunks), "Change") {
+		t.Fatalf("chunks = %#v, want preserved alphanumeric table content", chunks)
+	}
+}
+
 func TestChunkMarkdownIDsAreDeterministicAndModelSpecific(t *testing.T) {
 	t.Parallel()
 
@@ -316,6 +373,14 @@ func filePaths(files []MarkdownFile) []string {
 		paths[i] = file.RelativePath
 	}
 	return paths
+}
+
+func chunkTextFromChunks(chunks []Chunk) string {
+	texts := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		texts[i] = chunk.Text
+	}
+	return strings.Join(texts, "\n")
 }
 
 func writeFile(t *testing.T, root string, name string, contents string) {

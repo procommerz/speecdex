@@ -23,11 +23,20 @@ You can run `speecdex --service` to launch a persistent service that will provid
 
 Reindex markdown docs in the current folder tree: `speecdex`
 
+Speecdex compares Markdown file checksums against the previous compatible index.
+Unchanged files reuse stored chunks and embeddings, changed files are
+rechunked and reembedded, and deleted files are retained as deleted index
+records so restoring the same content can undelete them without another
+embedding call.
+
+Force a fresh rechunk/reembed of current files: `speecdex --force`
+
 During indexing, Speecdex prints per-file progress to stderr and the final
-indexing summary to stdout:
+indexing summary to stdout. Rebuild reuse diagnostics also print to stderr:
 
 ```text
 Indexing file 1/3: docs/overview.md (2 chunks) | elapsed 1s | 2.00 chunks/s | ETA 1s
+Index rebuild: reused 4 chunks | embedded 2 chunks | retained deleted 1 chunks
 ```
 
 Search in the index, semantic only: `speecdex --query "root business object definitions"`
