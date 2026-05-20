@@ -14,7 +14,7 @@ Rebuild the local index for the current folder tree, reusing unchanged file chun
 
 Required behavior:
 
-- Run indexing mode when no `--query`, `--text`, `--service`, `--show-branch`, `--init`, or `--install-skill` flag is provided.
+- Run indexing mode when no `--query`, `--text`, `--show-branch`, `--init`, or `--install-skill` flag is provided.
 - Print line-oriented indexing progress to stderr while files are processed.
 - Read configuration before discovery.
 - Store the current git branch in the index header when git is available and the project root is inside a git worktree.
@@ -34,7 +34,7 @@ Required behavior:
 - Ignore previous checksums for currently discovered files.
 - Rechunk and reembed all currently discovered Markdown files.
 - Preserve deleted chunks for files that are still missing.
-- Exit with code `2` if combined with `--query`, `--text`, or `--service`.
+- Exit with code `2` if combined with `--query` or `--text`.
 
 Summary output must include:
 
@@ -130,25 +130,10 @@ Required behavior:
 - Exit non-zero when the index is missing, unreadable, or unsupported.
 - Do not discover Markdown files, embed text, or rebuild the index.
 
-### `speecdex --service`
-
-Start the local embedding service.
-
-Required behavior:
-
-- Bind only to localhost.
-- Use default port `8248` unless configuration overrides it.
-- Expose an OpenAI-compatible `/v1/embeddings` endpoint.
-- Load or download the configured GGUF embedding model.
-- Print the listening URL to stdout after startup succeeds.
-- Continue running until interrupted.
-- Exit non-zero if the service cannot bind, load the model, or initialize the embedding runtime.
-
 ## Flag Rules
 
-- `--service` is mutually exclusive with indexing and search flags.
 - `--force` is valid only for indexing.
-- `--show-branch` is mutually exclusive with `--query`, `--text`, `--force`, and `--service`.
+- `--show-branch` is mutually exclusive with `--query`, `--text`, and `--force`.
 - `--init` is mutually exclusive with all other flags.
 - `--install-skill` is mutually exclusive with all other flags.
 - `--query` requires a non-empty value after trimming whitespace.
@@ -173,7 +158,6 @@ Stdout is reserved for command results:
 - Skill installation summary.
 - Search fenced YAML.
 - Stored branch output from `--show-branch`.
-- Service startup URL.
 
 Search YAML includes the branch stored in the index as a top-level
 `indexed_branch` field after `results`. When no branch is stored, the field is

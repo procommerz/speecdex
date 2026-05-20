@@ -14,7 +14,6 @@ Required scenarios:
 - `speecdex --query "root business object definitions"` runs semantic search.
 - `speecdex --text "extends BusinessObject"` runs literal-only search.
 - `speecdex --query "root" --text "extends BusinessObject"` runs combined OR search.
-- `speecdex --service` starts service mode and rejects search/index flags.
 - `speecdex --init` creates missing project config files without loading runtime config.
 - `speecdex --init` preserves existing `.yaml` configs and treats existing `.yml` configs as present.
 - `speecdex --install-skill` installs the packaged docs-search skill into detected local Codex and Claude Code project folders without overwriting existing skills.
@@ -33,7 +32,6 @@ Required scenarios:
 - Parses `config.only_entries`.
 - Parses `config.ignored_entries`.
 - Parses OpenAI-compatible embedding config.
-- Parses GGUF embedding config.
 - Accepts `apiKey` and `name` aliases for compatibility.
 - Redacts API keys in errors and logs.
 
@@ -62,11 +60,9 @@ Required scenarios:
 - Validates vector dimensions.
 - Uses bearer authorization when `api_key` is set.
 - Does not log API keys.
-- Uses reachable local service before remote endpoint.
-- Falls back to configured OpenAI-compatible endpoint when local service is unavailable.
-- Fails clearly when a GGUF-only config is used without a running local service.
+- Fails clearly when `llms.embedding` is missing.
 
-Use fake HTTP servers for remote and local embedding provider tests.
+Use fake HTTP servers for embedding provider tests.
 
 ## Storage Tests
 
@@ -93,18 +89,6 @@ Required scenarios:
 - Empty results print valid fenced YAML and exit `0`.
 - Missing index exits non-zero and does not rebuild.
 
-## Service Tests
-
-Required scenarios:
-
-- Service binds to `127.0.0.1:8248` by default.
-- Configured port overrides the default.
-- `/v1/embeddings` accepts OpenAI-compatible requests.
-- `/v1/embeddings` returns embeddings in OpenAI-compatible response shape.
-- Service reports startup URL on stdout.
-- Service exits non-zero when the port is unavailable.
-- Service reports model download or load failures clearly.
-
 ## Acceptance Criteria
 
 The MVP implementation is complete when:
@@ -113,5 +97,4 @@ The MVP implementation is complete when:
 - The CLI can index a temporary Markdown project with a fake embedding provider.
 - The CLI can search that index semantically and literally.
 - Search output is valid fenced YAML.
-- The local service API is testable with fake or fixture embedding behavior.
 - No test depends on external network access or real user configuration.

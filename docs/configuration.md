@@ -33,8 +33,6 @@ config:
     - .git
     - ignored.md
     - "*/plans/*.md"
-  service:
-    port: 8248
   indexing:
     chunk_size: 1200
     chunk_overlap: 200
@@ -66,17 +64,6 @@ Required behavior:
 - Support slash-separated relative paths.
 - Support glob-style `*` matching.
 - Always ignore the local Speecdex data directory.
-
-### `config.service.port`
-
-Port for `speecdex --service`.
-
-Default: `8248`.
-
-Required behavior:
-
-- Bind to `127.0.0.1:<port>`.
-- Reject invalid ports outside `1..65535`.
 
 ### `config.indexing.chunk_size`
 
@@ -120,9 +107,14 @@ Embedding config is required for indexing and semantic search. Reranking config 
 
 For compatibility with early examples, implementations should accept `apiKey` and `name` as aliases for `api_key` and `model_name`. Specs and new docs must use `api_key` and `model_name`.
 
-## Embedding Styles
+## Embedding Style
 
 ### `openai-compatible`
+
+The only MVP embedding style. Speecdex does not run its own model runtime;
+local models are served by an external OpenAI-compatible process that the
+user runs themselves (for example `llama-server`, Ollama, or LM Studio) and
+addressed through `endpoint`.
 
 Required fields:
 
@@ -135,26 +127,6 @@ Optional fields:
 - `api_key`
 
 The client posts to `<endpoint>/embeddings` when `endpoint` already ends in `/v1`, matching the OpenAI-compatible URL shape `/v1/embeddings`.
-
-### `gguf`
-
-Required fields:
-
-- `model_name`
-- `default_dims`
-
-`model_name` may be either:
-
-- A local filesystem path to a GGUF model.
-- An HTTPS URL to a GGUF model.
-
-Default GGUF model:
-
-```text
-https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-f32.gguf
-```
-
-Default dimensions for that model: `384`.
 
 ## Error Handling
 

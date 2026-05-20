@@ -46,18 +46,6 @@ Expected behavior:
 - Deduplicate chunks that match multiple sources.
 - Preserve match source metadata in the output.
 
-### Serve a local embedding model
-
-Running `speecdex --service` starts a long-running local embedding service.
-
-Expected behavior:
-
-- Bind to localhost on the configured port, default `8248`.
-- Serve an OpenAI-compatible `/v1/embeddings` endpoint.
-- Use the configured GGUF embedding model.
-- Download the configured model on startup when it is not already available.
-- Keep running until interrupted.
-
 ## MVP Boundaries
 
 Included in MVP:
@@ -65,8 +53,7 @@ Included in MVP:
 - macOS development build.
 - Recursive Markdown discovery.
 - Project and user configuration.
-- OpenAI-compatible remote embeddings.
-- Optional local GGUF embedding service.
+- OpenAI-compatible embeddings (remote or local OpenAI-compatible runtime).
 - Local binary index artifact.
 - Semantic search.
 - Literal text search.
@@ -80,7 +67,6 @@ Deferred from MVP:
 - Hosted or shared indexes.
 - Incremental indexing guarantees.
 - Non-Markdown source formats.
-- Authentication for the local service.
 - Complex query language.
 - Editor or IDE integration.
 
@@ -89,6 +75,6 @@ Deferred from MVP:
 - Local by default: source files, configuration, and index artifacts live with the developer's working tree or user profile.
 - Source-grounded: every result must point back to a file path and line range.
 - Configurable but small: defaults should work for common Markdown projects, and configuration should remain readable YAML.
-- Provider-flexible: embeddings can come from a remote OpenAI-compatible endpoint or a local GGUF model served through the same API shape.
+- Provider-flexible: embeddings come from any OpenAI-compatible endpoint, whether remote or served locally by a runtime the user already runs.
 - Testable contracts: CLI behavior, config precedence, index metadata, and output format must be stable enough to drive tests before implementation.
 

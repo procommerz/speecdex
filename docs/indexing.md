@@ -2,7 +2,7 @@
 
 ## Trigger
 
-Running `speecdex` with no search or service flags rebuilds the local index for the current working directory tree.
+Running `speecdex` with no search flags rebuilds the local index for the current working directory tree.
 
 By default, indexing performs an intelligent rebuild against a compatible existing index. Files whose normalized content checksum is unchanged reuse their stored chunks and vectors. Files whose checksum changed are rechunked and reembedded. Running `speecdex --force` disables checksum reuse for currently discovered files.
 

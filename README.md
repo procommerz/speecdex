@@ -7,7 +7,9 @@ source-grounded matches with file paths, line ranges, scores, and chunk text.
 
 The MVP is scoped to predictable local developer use: Markdown files under the
 current working directory, project/user YAML configuration, OpenAI-compatible
-embeddings, an optional local embedding service, and fenced YAML search output.
+embeddings, and fenced YAML search output. Local embedding models are served
+by any OpenAI-compatible runtime the user already runs (for example
+`llama-server`, Ollama, or LM Studio).
 
 ## Quick Start
 
@@ -133,8 +135,6 @@ config:
   ignored_entries:
     - .git
     - docs/private
-  service:
-    port: 8248
   indexing:
     chunk_size: 1200
     chunk_overlap: 200
@@ -155,18 +155,39 @@ llms:
 
 Reranking is optional and is active only when `llms.reranking` is configured.
 
-## Local Embedding Service
+## Running a Local Embedding Model
 
-`speecdex --service` starts a persistent localhost embedding service on
-`127.0.0.1:8248` unless `config.service.port` overrides the port.
+Speecdex does not ship its own model runtime. It talks to any server that
+exposes an OpenAI-compatible `/v1/embeddings` endpoint, so a local embedding
+model is just a matter of pointing `llms.embedding.endpoint` at a process you
+run yourself.
 
-The service exposes an OpenAI-compatible `/v1/embeddings` endpoint. When a
-compatible local service is reachable, indexing and semantic search use it
-before falling back to a configured OpenAI-compatible endpoint.
+The recommended option is [llama.cpp's `llama-server`](https://github.com/ggml-org/llama.cpp), which serves any
+GGUF embedding model with an OpenAI-compatible API:
 
-For GGUF configuration, normal CLI commands do not embed directly in process
-for the MVP. Start `speecdex --service` first, or configure an
-OpenAI-compatible fallback endpoint.
+```sh
+llama-server \
+  --embedding \
+  --host 127.0.0.1 \
+  --port 8080 \
+  -hf CompendiumLabs/bge-small-en-v1.5-gguf
+```
+
+Then point `.speecdex/llms.yaml` at it:
+
+```yaml
+llms:
+  embedding:
+    style: openai-compatible
+    endpoint: http://127.0.0.1:8080/v1
+    model_name: bge-small-en-v1.5
+    default_dims: 384
+```
+
+Other OpenAI-compatible local runtimes work the same way — for example
+[Ollama](https://ollama.com) on `http://127.0.0.1:11434/v1` or
+[LM Studio](https://lmstudio.ai) on `http://127.0.0.1:1234/v1`. Whichever
+runtime is listening on the configured endpoint is what Speecdex will use.
 
 ## Building
 
@@ -205,6 +226,6 @@ The build can be adjusted with make variables:
 make docker-build GOOS=darwin GOARCH=amd64
 ```
 
-The MVP build path uses `CGO_ENABLED=0`, which is suitable for the current pure
-Go CLI. If future local GGUF runtime work requires cgo, the cross-compilation
-strategy will need to be revisited.
+The MVP build path uses `CGO_ENABLED=0`, which is suitable for the pure-Go
+CLI. Local model inference is delegated to an external OpenAI-compatible
+runtime, so Speecdex itself does not need cgo.

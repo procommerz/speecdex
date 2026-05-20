@@ -13,10 +13,10 @@ The `docs/` directory contains the implementation contracts for the MVP. Treat t
 - `docs/cli.md` defines the public command-line interface, supported flags, exit codes, and stdout/stderr contracts.
 - `docs/configuration.md` defines config discovery, supported file names, YAML schemas, defaults, precedence, and validation rules.
 - `docs/indexing.md` defines Markdown discovery, ignore handling, file reading, chunking, embedding during indexing, and indexing summaries.
-- `docs/embeddings.md` defines embedding provider behavior, OpenAI-compatible calls, the local GGUF-backed embedding service, model caching, and compatibility checks.
+- `docs/embeddings.md` defines embedding provider behavior, OpenAI-compatible calls, and compatibility checks. Local models are served by an external OpenAI-compatible runtime the user runs themselves; Speecdex does not ship its own.
 - `docs/index-storage.md` defines the local index artifact location, required stored metadata, atomic write behavior, read behavior, and rebuild invalidation rules.
 - `docs/search.md` defines semantic search, literal text search, combined OR search, optional reranking, and fenced YAML result output.
-- `docs/test-plan.md` maps the MVP specs to required CLI, config, indexing, embedding, storage, search, and service tests.
+- `docs/test-plan.md` maps the MVP specs to required CLI, config, indexing, embedding, storage, and search tests.
 
 When specs and older prose disagree, prefer the files under `docs/`.
 
