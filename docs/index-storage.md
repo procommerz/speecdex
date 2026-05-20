@@ -31,6 +31,7 @@ Index header:
 - Format version.
 - Created timestamp.
 - Project root identity.
+- Git branch name when available.
 - Embedding provider style.
 - Embedding model identity.
 - Embedding dimensions.
@@ -97,6 +98,7 @@ The new index should differ when any of these inputs differ:
 Required behavior:
 
 - A previous index is reusable only when project root identity, embedding provider style, embedding model identity, embedding dimensions, distance metric, chunking settings, include-only rules, and ignore rules match the active configuration.
+- A current git branch change updates stored metadata but does not make otherwise compatible chunks unreusable.
 - Chunks for unchanged files are reused by comparing the current file content hash to the stored source hash.
 - Chunks for changed files are removed from the rebuilt index and replaced by newly embedded chunks.
 - Chunks for missing files are retained with `deleted=true` and excluded from search.

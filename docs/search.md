@@ -81,8 +81,14 @@ results:
       - extends BusinessObject
     text: |
       Chunk text appears here.
+indexed_branch: main
 ```
 ````
+
+Required top-level fields:
+
+- `results`
+- `indexed_branch`
 
 Required fields per result:
 
@@ -105,8 +111,8 @@ Empty searches still print valid fenced YAML:
 ````text
 ```yaml
 results: []
+indexed_branch: ""
 ```
 ````
 
 The command exits with code `0` when the search ran successfully, even if no results matched.
-

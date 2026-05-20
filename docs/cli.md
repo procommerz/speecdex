@@ -17,6 +17,7 @@ Required behavior:
 - Run indexing mode when no `--query`, `--text`, or `--service` flag is provided.
 - Print line-oriented indexing progress to stderr while files are processed.
 - Read configuration before discovery.
+- Store the current git branch in the index header when git is available and the project root is inside a git worktree.
 - Discover Markdown files, compare file content checksums to a compatible previous index, and only rechunk/reembed current files whose checksum changed or whose chunks are missing.
 - Preserve chunks for deleted source files as deleted index records; deleted chunks must not appear in search results.
 - Print checksum rebuild diagnostics to stderr, including reused, embedded, and retained-deleted chunk counts.
@@ -42,6 +43,7 @@ Summary output must include:
 - Number of chunks indexed.
 - Embedding provider identity.
 - Index artifact path.
+- Indexed git branch when available.
 
 Progress output must use this form:
 
@@ -85,6 +87,18 @@ Required behavior:
 - Avoid embedding calls when no `--query` is present.
 - Return results as fenced YAML.
 
+### `speecdex --show-branch`
+
+Print the git branch stored in the existing local index and exit.
+
+Required behavior:
+
+- Load the local index before reading branch metadata.
+- Print the stored branch name to stdout followed by a newline when available.
+- Print nothing and exit `0` when the index has no stored branch.
+- Exit non-zero when the index is missing, unreadable, or unsupported.
+- Do not discover Markdown files, embed text, or rebuild the index.
+
 ### `speecdex --service`
 
 Start the local embedding service.
@@ -103,6 +117,7 @@ Required behavior:
 
 - `--service` is mutually exclusive with indexing and search flags.
 - `--force` is valid only for indexing.
+- `--show-branch` is mutually exclusive with `--query`, `--text`, `--force`, and `--service`.
 - `--query` requires a non-empty value after trimming whitespace.
 - `--text` may be repeated.
 - Empty `--text` values are invalid.
@@ -122,7 +137,12 @@ Stdout is reserved for command results:
 
 - Indexing summary.
 - Search fenced YAML.
+- Stored branch output from `--show-branch`.
 - Service startup URL.
+
+Search YAML includes the branch stored in the index as a top-level
+`indexed_branch` field after `results`. When no branch is stored, the field is
+an empty string.
 
 Stderr is reserved for:
 

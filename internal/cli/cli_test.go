@@ -60,6 +60,11 @@ func TestParseSelectsModes(t *testing.T) {
 			args: []string{"--force"},
 			want: Options{Mode: ModeIndex, Force: true},
 		},
+		{
+			name: "show branch selects show branch mode",
+			args: []string{"--show-branch"},
+			want: Options{Mode: ModeShowBranch, ShowBranch: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -118,6 +123,26 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 			name:       "force rejects service",
 			args:       []string{"--force", "--service"},
 			wantStderr: "--force can only be used while indexing",
+		},
+		{
+			name:       "show branch rejects query",
+			args:       []string{"--show-branch", "--query", "root"},
+			wantStderr: "--show-branch cannot be combined",
+		},
+		{
+			name:       "show branch rejects text",
+			args:       []string{"--show-branch", "--text", "root"},
+			wantStderr: "--show-branch cannot be combined",
+		},
+		{
+			name:       "show branch rejects force",
+			args:       []string{"--show-branch", "--force"},
+			wantStderr: "--show-branch cannot be combined",
+		},
+		{
+			name:       "show branch rejects service",
+			args:       []string{"--show-branch", "--service"},
+			wantStderr: "--show-branch cannot be combined",
 		},
 	}
 
@@ -266,6 +291,83 @@ config:
 		if !strings.Contains(gotStdout, want) {
 			t.Fatalf("stdout = %q, want to contain %q", gotStdout, want)
 		}
+	}
+}
+
+func TestRunIndexStoresDetectedGitBranchAndWritesSummary(t *testing.T) {
+	restore := stubGitBranch("feature/docs")
+	defer restore()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, recorder := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nRoot business object\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if got := recorder.RequestCount(); got != 1 {
+		t.Fatalf("embedding request count = %d, want 1", got)
+	}
+
+	idx, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read() error = %v", err)
+	}
+	if idx.Header.GitBranch != "feature/docs" {
+		t.Fatalf("GitBranch = %q, want feature/docs", idx.Header.GitBranch)
+	}
+	if !strings.Contains(stdout.String(), "Indexed git branch: feature/docs") {
+		t.Fatalf("stdout = %q, want indexed git branch summary", stdout.String())
+	}
+}
+
+func TestRunIndexTreatsMissingGitBranchAsEmpty(t *testing.T) {
+	restore := stubGitBranch("")
+	defer restore()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	server, _ := newEmbeddingRecorder(t)
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nRoot business object\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+
+	idx, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read() error = %v", err)
+	}
+	if idx.Header.GitBranch != "" {
+		t.Fatalf("GitBranch = %q, want empty branch", idx.Header.GitBranch)
+	}
+	if strings.Contains(stdout.String(), "Indexed git branch:") {
+		t.Fatalf("stdout = %q, did not expect indexed git branch summary", stdout.String())
 	}
 }
 
@@ -833,7 +935,7 @@ func TestRunSemanticSearchUsesExistingIndexAndWritesFencedYAML(t *testing.T) {
 	writeSearchIndex(t, projectRoot, []storage.Chunk{
 		{ID: "chunk-a", SourcePath: "docs/a.md", StartLine: 1, EndLine: 3, Text: "Root business object", Vector: []float64{1, 0}},
 		{ID: "chunk-b", SourcePath: "docs/b.md", StartLine: 5, EndLine: 7, Text: "Other text", Vector: []float64{0, 1}},
-	}, "test-model", 2)
+	}, "test-model", 2, "feature/docs")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -849,7 +951,7 @@ func TestRunSemanticSearchUsesExistingIndexAndWritesFencedYAML(t *testing.T) {
 		t.Fatalf("embedding request = %#v, want /v1/embeddings with model and query", gotRequest)
 	}
 	got := stdout.String()
-	for _, want := range []string{"```yaml\n", "results:", "file: docs/a.md", "start_line: 1", "- semantic", "text: Root business object", "```\n"} {
+	for _, want := range []string{"```yaml\n", "results:", "file: docs/a.md", "start_line: 1", "- semantic", "text: Root business object", "indexed_branch: feature/docs", "```\n"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want to contain %q", got, want)
 		}
@@ -918,6 +1020,75 @@ func TestRunCombinedSearchUsesORSemantics(t *testing.T) {
 	}
 	if strings.Count(got, "file: docs/a.md") != 1 {
 		t.Fatalf("stdout = %q, want docs/a.md deduplicated", got)
+	}
+}
+
+func TestRunShowBranchPrintsStoredBranch(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	writeSearchIndex(t, projectRoot, []storage.Chunk{
+		{ID: "chunk-a", SourcePath: "docs/a.md", StartLine: 1, EndLine: 3, Text: "Root business object", Vector: []float64{1, 0}},
+	}, "test-model", 2, "feature/docs")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, []string{"--show-branch"}, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if stdout.String() != "feature/docs\n" {
+		t.Fatalf("stdout = %q, want stored branch", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
+func TestRunShowBranchPrintsNothingForEmptyBranch(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	writeSearchIndex(t, projectRoot, []storage.Chunk{
+		{ID: "chunk-a", SourcePath: "docs/a.md", StartLine: 1, EndLine: 3, Text: "Root business object", Vector: []float64{1, 0}},
+	}, "test-model", 2)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, []string{"--show-branch"}, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no output for empty branch", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
+func TestRunShowBranchMissingIndexExitsRuntimeErrorWithoutRebuilding(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, []string{"--show-branch"}, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitRuntimeError {
+		t.Fatalf("Run() exit code = %d, want %d", code, ExitRuntimeError)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "index artifact is missing") {
+		t.Fatalf("stderr = %q, want missing index error", stderr.String())
+	}
+	if _, err := os.Stat(storage.ArtifactPath(projectRoot)); !os.IsNotExist(err) {
+		t.Fatalf("index artifact stat error = %v, want missing artifact", err)
 	}
 }
 
@@ -1008,6 +1179,9 @@ func assertOptions(t *testing.T, got Options, want Options) {
 	if got.Force != want.Force {
 		t.Fatalf("Force = %t, want %t", got.Force, want.Force)
 	}
+	if got.ShowBranch != want.ShowBranch {
+		t.Fatalf("ShowBranch = %t, want %t", got.ShowBranch, want.ShowBranch)
+	}
 	if len(got.Text) != len(want.Text) {
 		t.Fatalf("Text length = %d, want %d; got %#v", len(got.Text), len(want.Text), got.Text)
 	}
@@ -1043,6 +1217,16 @@ func assertProgressLine(t *testing.T, got string, pattern string) {
 
 	if !regexp.MustCompile(pattern).MatchString(got) {
 		t.Fatalf("stderr = %q, want progress line matching %q", got, pattern)
+	}
+}
+
+func stubGitBranch(branch string) func() {
+	previous := detectGitBranch
+	detectGitBranch = func(string) string {
+		return branch
+	}
+	return func() {
+		detectGitBranch = previous
 	}
 }
 
@@ -1084,14 +1268,19 @@ llms:
 `)
 }
 
-func writeSearchIndex(t *testing.T, root string, chunks []storage.Chunk, modelName string, dimensions int) {
+func writeSearchIndex(t *testing.T, root string, chunks []storage.Chunk, modelName string, dimensions int, gitBranch ...string) {
 	t.Helper()
 
+	branch := ""
+	if len(gitBranch) > 0 {
+		branch = gitBranch[0]
+	}
 	idx := storage.Index{
 		Header: storage.Header{
 			FormatName:             storage.FormatName,
 			FormatVersion:          storage.FormatVersion,
 			CreatedAt:              time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC),
+			GitBranch:              branch,
 			EmbeddingProviderStyle: "openai-compatible",
 			EmbeddingModelIdentity: modelName,
 			EmbeddingDimensions:    dimensions,

@@ -32,7 +32,9 @@ embedding call.
 Force a fresh rechunk/reembed of current files: `speecdex --force`
 
 During indexing, Speecdex prints per-file progress to stderr and the final
-indexing summary to stdout. Rebuild reuse diagnostics also print to stderr:
+indexing summary to stdout. When run inside a git worktree, the index stores
+the active branch and includes it in the summary. Rebuild reuse diagnostics
+also print to stderr:
 
 ```text
 Indexing file 1/3: docs/overview.md (2 chunks) | elapsed 1s | 2.00 chunks/s | ETA 1s
@@ -42,6 +44,15 @@ Index rebuild: reused 4 chunks | embedded 2 chunks | retained deleted 1 chunks
 Search in the index, semantic only: `speecdex --query "root business object definitions"`
 
 Search in the index semantic OR any text match: `speecdex --query "root business object definitions" --text "extends BusinessObject" --text "implements BusinessObject"`
+
+Search output includes the branch that was active when the index was written:
+
+```yaml
+results: []
+indexed_branch: main
+```
+
+Print only the branch stored in the current index: `speecdex --show-branch`
 
 ## App Configuration
 

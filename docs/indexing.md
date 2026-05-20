@@ -96,6 +96,17 @@ Required behavior:
 - Do not call the embedding provider for chunks reused from an unchanged file checksum.
 - Write the index only after all files and chunks have been processed successfully.
 
+## Git Branch Metadata
+
+Indexing stores the current git branch in the index header when it can be detected.
+
+Required behavior:
+
+- Detect the branch for the project root being indexed.
+- Store an empty branch name when git is unavailable, the project root is not a git worktree, the checkout is detached, or no branch is returned.
+- Do not print warnings or fail indexing when branch detection is unavailable.
+- Do not force rechunking or reembedding solely because the current git branch changed.
+
 ## Deleted Source Files
 
 When a source Markdown file that existed in a compatible previous index is no longer discovered, indexing preserves its existing chunks and source checksum but marks the source and chunks as deleted.
@@ -140,6 +151,7 @@ Required fields:
 - Ignored entries count.
 - Embedding provider identity.
 - Index artifact path.
+- Indexed git branch when available.
 
 Warnings, such as ignored unreadable directories, print to stderr.
 

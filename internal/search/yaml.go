@@ -8,7 +8,8 @@ import (
 )
 
 type yamlOutput struct {
-	Results []yamlResult `yaml:"results"`
+	Results       []yamlResult `yaml:"results"`
+	IndexedBranch string       `yaml:"indexed_branch"`
 }
 
 type yamlResult struct {
@@ -21,19 +22,14 @@ type yamlResult struct {
 	Text         string   `yaml:"text"`
 }
 
-func WriteYAML(w io.Writer, results []Result) error {
+func WriteYAML(w io.Writer, results []Result, indexedBranch string) error {
 	if _, err := fmt.Fprintln(w, "```yaml"); err != nil {
 		return err
 	}
-	if len(results) == 0 {
-		if _, err := fmt.Fprintln(w, "results: []"); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(w, "```")
-		return err
+	out := yamlOutput{
+		Results:       make([]yamlResult, len(results)),
+		IndexedBranch: indexedBranch,
 	}
-
-	out := yamlOutput{Results: make([]yamlResult, len(results))}
 	for i, result := range results {
 		out.Results[i] = yamlResult{
 			File:         result.File,

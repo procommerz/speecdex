@@ -167,7 +167,7 @@ func TestWriteYAMLEmitsFencedResultsAndEmptyResults(t *testing.T) {
 		Text:         "Chunk text appears here.",
 	}}
 
-	if err := WriteYAML(&out, results); err != nil {
+	if err := WriteYAML(&out, results, "feature/docs"); err != nil {
 		t.Fatalf("WriteYAML() error = %v", err)
 	}
 	got := out.String()
@@ -180,6 +180,7 @@ func TestWriteYAMLEmitsFencedResultsAndEmptyResults(t *testing.T) {
 		"- semantic",
 		"matched_text:",
 		"text: Chunk text appears here.",
+		"indexed_branch: feature/docs",
 		"```\n",
 	} {
 		if !strings.Contains(got, want) {
@@ -188,10 +189,10 @@ func TestWriteYAMLEmitsFencedResultsAndEmptyResults(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := WriteYAML(&out, nil); err != nil {
+	if err := WriteYAML(&out, nil, ""); err != nil {
 		t.Fatalf("WriteYAML(empty) error = %v", err)
 	}
-	if out.String() != "```yaml\nresults: []\n```\n" {
+	if out.String() != "```yaml\nresults: []\nindexed_branch: \"\"\n```\n" {
 		t.Fatalf("empty YAML output = %q, want fenced empty results", out.String())
 	}
 }

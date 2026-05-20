@@ -32,6 +32,7 @@ type Header struct {
 	FormatVersion          int
 	CreatedAt              time.Time
 	ProjectRootIdentity    string
+	GitBranch              string
 	EmbeddingProviderStyle string
 	EmbeddingModelIdentity string
 	EmbeddingDimensions    int
@@ -74,6 +75,7 @@ type CompatibilityOptions struct {
 type BuildOptions struct {
 	CreatedAt              time.Time
 	ProjectRoot            string
+	GitBranch              string
 	EmbeddingProviderStyle string
 	EmbeddingModelIdentity string
 	EmbeddingDimensions    int
@@ -326,6 +328,7 @@ func newHeader(opts BuildOptions) (Header, error) {
 		FormatVersion:          FormatVersion,
 		CreatedAt:              createdAt,
 		ProjectRootIdentity:    identity,
+		GitBranch:              opts.GitBranch,
 		EmbeddingProviderStyle: opts.EmbeddingProviderStyle,
 		EmbeddingModelIdentity: opts.EmbeddingModelIdentity,
 		EmbeddingDimensions:    opts.EmbeddingDimensions,

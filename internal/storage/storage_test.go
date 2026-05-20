@@ -61,11 +61,54 @@ func TestReadRoundTripsStoredIndexData(t *testing.T) {
 	if got.Header.FormatName != FormatName || got.Header.FormatVersion != FormatVersion {
 		t.Fatalf("header format = %q/%d, want %q/%d", got.Header.FormatName, got.Header.FormatVersion, FormatName, FormatVersion)
 	}
+	if got.Header.GitBranch != "feature/docs" {
+		t.Fatalf("GitBranch = %q, want feature/docs", got.Header.GitBranch)
+	}
 	if !reflect.DeepEqual(got.Sources, want.Sources) {
 		t.Fatalf("Sources = %#v, want %#v", got.Sources, want.Sources)
 	}
 	if !reflect.DeepEqual(got.Chunks, want.Chunks) {
 		t.Fatalf("Chunks = %#v, want %#v", got.Chunks, want.Chunks)
+	}
+}
+
+func TestReadOldIndexWithoutGitBranchTreatsBranchAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	identity, err := projectRootIdentity(root)
+	if err != nil {
+		t.Fatalf("projectRootIdentity() error = %v", err)
+	}
+	writeRawOldIndex(t, root, oldIndex{
+		Header: oldHeader{
+			FormatName:             FormatName,
+			FormatVersion:          FormatVersion,
+			CreatedAt:              time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC),
+			ProjectRootIdentity:    identity,
+			EmbeddingProviderStyle: "openai-compatible",
+			EmbeddingModelIdentity: "test-model",
+			EmbeddingDimensions:    2,
+			DistanceMetric:         DistanceMetricCosine,
+			ChunkSize:              1200,
+			ChunkOverlap:           200,
+		},
+		Chunks: []Chunk{{
+			ID:         "chunk-1",
+			SourcePath: "docs/example.md",
+			StartLine:  1,
+			EndLine:    1,
+			Text:       "chunk text",
+			Vector:     []float64{1, 0},
+		}},
+	})
+
+	got, err := Read(root, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got.Header.GitBranch != "" {
+		t.Fatalf("GitBranch = %q, want empty branch for old index", got.Header.GitBranch)
 	}
 }
 
@@ -267,6 +310,7 @@ func TestBuildIndexConvertsIndexingDataAndValidatesVectors(t *testing.T) {
 		ChunkSize:              1200,
 		ChunkOverlap:           200,
 		IgnoredEntries:         []string{"z", "a"},
+		GitBranch:              "feature/docs",
 	}, files, chunks, [][]float64{{0.1, 0.2}})
 	if err != nil {
 		t.Fatalf("BuildIndex() error = %v", err)
@@ -274,6 +318,9 @@ func TestBuildIndexConvertsIndexingDataAndValidatesVectors(t *testing.T) {
 
 	if got.Header.DistanceMetric != DistanceMetricCosine {
 		t.Fatalf("DistanceMetric = %q, want cosine", got.Header.DistanceMetric)
+	}
+	if got.Header.GitBranch != "feature/docs" {
+		t.Fatalf("GitBranch = %q, want feature/docs", got.Header.GitBranch)
 	}
 	if !reflect.DeepEqual(got.Header.IgnoredEntries, []string{"a", "z"}) {
 		t.Fatalf("IgnoredEntries = %#v, want sorted list", got.Header.IgnoredEntries)
@@ -392,6 +439,7 @@ func sampleIndex(t *testing.T, root string) Index {
 			FormatVersion:          FormatVersion,
 			CreatedAt:              time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC),
 			ProjectRootIdentity:    identity,
+			GitBranch:              "feature/docs",
 			EmbeddingProviderStyle: "openai-compatible",
 			EmbeddingModelIdentity: "test-model",
 			EmbeddingDimensions:    3,
@@ -420,6 +468,44 @@ func sampleIndex(t *testing.T, root string) Index {
 }
 
 func writeRawIndex(t *testing.T, root string, idx Index) {
+	t.Helper()
+
+	path := ArtifactPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	defer file.Close()
+	if err := gob.NewEncoder(file).Encode(idx); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+}
+
+type oldIndex struct {
+	Header  oldHeader
+	Sources []SourceFile
+	Chunks  []Chunk
+}
+
+type oldHeader struct {
+	FormatName             string
+	FormatVersion          int
+	CreatedAt              time.Time
+	ProjectRootIdentity    string
+	EmbeddingProviderStyle string
+	EmbeddingModelIdentity string
+	EmbeddingDimensions    int
+	DistanceMetric         string
+	ChunkSize              int
+	ChunkOverlap           int
+	OnlyEntries            []string
+	IgnoredEntries         []string
+}
+
+func writeRawOldIndex(t *testing.T, root string, idx oldIndex) {
 	t.Helper()
 
 	path := ArtifactPath(root)

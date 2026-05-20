@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -28,20 +29,24 @@ const (
 type Mode string
 
 const (
-	ModeIndex   Mode = "index"
-	ModeSearch  Mode = "search"
-	ModeService Mode = "service"
+	ModeIndex      Mode = "index"
+	ModeSearch     Mode = "search"
+	ModeService    Mode = "service"
+	ModeShowBranch Mode = "show-branch"
 )
 
 type Options struct {
-	Mode    Mode
-	Query   string
-	Text    []string
-	Service bool
-	Force   bool
+	Mode       Mode
+	Query      string
+	Text       []string
+	Service    bool
+	Force      bool
+	ShowBranch bool
 }
 
 type textFlags []string
+
+var detectGitBranch = currentGitBranch
 
 func (t *textFlags) String() string {
 	return strings.Join(*t, ",")
@@ -85,6 +90,9 @@ func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions
 			return ExitRuntimeError
 		}
 		loadOptions.UserHome = userHome
+	}
+	if opts.Mode == ModeShowBranch {
+		return runShowBranch(loadOptions.ProjectRoot, stdout, stderr)
 	}
 	cfg, err := config.Load(loadOptions)
 	if err != nil {
@@ -146,6 +154,7 @@ func runIndex(opts Options, cfg config.Config, projectRoot string, stdout io.Wri
 		ChunkOverlap:           cfg.Indexing.ChunkOverlap,
 		OnlyEntries:            cfg.OnlyEntries,
 		IgnoredEntries:         cfg.IgnoredEntries,
+		GitBranch:              detectGitBranch(absRoot),
 	}
 	previous, hasPrevious := reusablePreviousIndex(absRoot, buildOptions, stderr)
 	plan := planIndexRebuild(discovery.Files, chunkOptions, previous, hasPrevious, opts.Force)
@@ -207,6 +216,9 @@ func runIndex(opts Options, cfg config.Config, projectRoot string, stdout io.Wri
 	fmt.Fprintf(stdout, "Ignored entries: %d\n", discovery.IgnoredEntriesCount)
 	fmt.Fprintf(stdout, "Embedding provider: %s/%s\n", cfg.Embedding.Style, cfg.Embedding.ModelName)
 	fmt.Fprintf(stdout, "Index artifact: %s\n", storage.ArtifactPath(absRoot))
+	if idx.Header.GitBranch != "" {
+		fmt.Fprintf(stdout, "Indexed git branch: %s\n", idx.Header.GitBranch)
+	}
 	return ExitOK
 }
 
@@ -455,11 +467,31 @@ func runSearch(opts Options, cfg config.Config, projectRoot string, stdout io.Wr
 		fmt.Fprintf(stderr, "%v\n", err)
 		return ExitRuntimeError
 	}
-	if err := search.WriteYAML(stdout, results); err != nil {
+	if err := search.WriteYAML(stdout, results, idx.Header.GitBranch); err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return ExitRuntimeError
 	}
 	return ExitOK
+}
+
+func runShowBranch(projectRoot string, stdout io.Writer, stderr io.Writer) int {
+	idx, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+	if idx.Header.GitBranch != "" {
+		fmt.Fprintln(stdout, idx.Header.GitBranch)
+	}
+	return ExitOK
+}
+
+func currentGitBranch(projectRoot string) string {
+	out, err := exec.Command("git", "-C", projectRoot, "branch", "--show-current").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func newEmbedder(cfg config.Config) (search.Embedder, error) {
@@ -492,6 +524,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 		fmt.Fprintln(stderr, "  speecdex [--force]")
 		fmt.Fprintln(stderr, "  speecdex --query <query> [--text <literal> ...]")
 		fmt.Fprintln(stderr, "  speecdex --text <literal> [--text <literal> ...]")
+		fmt.Fprintln(stderr, "  speecdex --show-branch")
 		fmt.Fprintln(stderr, "  speecdex --service")
 	}
 
@@ -499,6 +532,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	flags.Var(&texts, "text", "literal text search term; may be repeated")
 	flags.BoolVar(&opts.Service, "service", false, "start the local embedding service")
 	flags.BoolVar(&opts.Force, "force", false, "rebuild current files without reusing checksum-matched chunks")
+	flags.BoolVar(&opts.ShowBranch, "show-branch", false, "print the git branch stored in the local index")
 
 	if err := flags.Parse(args); err != nil {
 		return Options{}, err
@@ -515,6 +549,9 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 		return Options{}, usageError(stderr, flags, "--query requires a non-empty value")
 	}
 
+	if opts.ShowBranch && (opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
+		return Options{}, usageError(stderr, flags, "--show-branch cannot be combined with other flags")
+	}
 	if opts.Service && (opts.Query != "" || len(opts.Text) > 0) {
 		return Options{}, usageError(stderr, flags, "--service cannot be combined with --query or --text")
 	}
@@ -523,6 +560,8 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	}
 
 	switch {
+	case opts.ShowBranch:
+		opts.Mode = ModeShowBranch
 	case opts.Service:
 		opts.Mode = ModeService
 	case opts.Query != "" || len(opts.Text) > 0:
