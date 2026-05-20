@@ -54,6 +54,11 @@ func TestParseSelectsModes(t *testing.T) {
 			args: []string{"--init"},
 			want: Options{Mode: ModeInit, Init: true},
 		},
+		{
+			name: "install skill selects install skill mode",
+			args: []string{"--install-skill"},
+			want: Options{Mode: ModeInstallSkill, InstallSkill: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -158,6 +163,36 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 			args:       []string{"--init", "--service"},
 			wantStderr: "--init cannot be combined",
 		},
+		{
+			name:       "install skill rejects query",
+			args:       []string{"--install-skill", "--query", "root"},
+			wantStderr: "--install-skill cannot be combined",
+		},
+		{
+			name:       "install skill rejects text",
+			args:       []string{"--install-skill", "--text", "root"},
+			wantStderr: "--install-skill cannot be combined",
+		},
+		{
+			name:       "install skill rejects force",
+			args:       []string{"--install-skill", "--force"},
+			wantStderr: "--install-skill cannot be combined",
+		},
+		{
+			name:       "install skill rejects show branch",
+			args:       []string{"--install-skill", "--show-branch"},
+			wantStderr: "--install-skill cannot be combined",
+		},
+		{
+			name:       "install skill rejects service",
+			args:       []string{"--install-skill", "--service"},
+			wantStderr: "--install-skill cannot be combined",
+		},
+		{
+			name:       "install skill rejects init",
+			args:       []string{"--install-skill", "--init"},
+			wantStderr: "--install-skill cannot be combined",
+		},
 	}
 
 	for _, tt := range tests {
@@ -181,7 +216,7 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 	}
 }
 
-func TestUsageIncludesInitCommand(t *testing.T) {
+func TestUsageIncludesProjectSetupCommands(t *testing.T) {
 	t.Parallel()
 
 	var stdout bytes.Buffer
@@ -195,6 +230,9 @@ func TestUsageIncludesInitCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "speecdex --init") {
 		t.Fatalf("Run() stderr = %q, want usage to include init command", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "speecdex --install-skill") {
+		t.Fatalf("Run() stderr = %q, want usage to include install skill command", stderr.String())
 	}
 }
 
@@ -235,6 +273,9 @@ func assertOptions(t *testing.T, got Options, want Options) {
 	}
 	if got.Init != want.Init {
 		t.Fatalf("Init = %t, want %t", got.Init, want.Init)
+	}
+	if got.InstallSkill != want.InstallSkill {
+		t.Fatalf("InstallSkill = %t, want %t", got.InstallSkill, want.InstallSkill)
 	}
 	if len(got.Text) != len(want.Text) {
 		t.Fatalf("Text length = %d, want %d; got %#v", len(got.Text), len(want.Text), got.Text)

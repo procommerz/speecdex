@@ -14,7 +14,7 @@ Rebuild the local index for the current folder tree, reusing unchanged file chun
 
 Required behavior:
 
-- Run indexing mode when no `--query`, `--text`, `--service`, `--show-branch`, or `--init` flag is provided.
+- Run indexing mode when no `--query`, `--text`, `--service`, `--show-branch`, `--init`, or `--install-skill` flag is provided.
 - Print line-oriented indexing progress to stderr while files are processed.
 - Read configuration before discovery.
 - Store the current git branch in the index header when git is available and the project root is inside a git worktree.
@@ -64,6 +64,22 @@ Required behavior:
 - Never overwrite existing config files.
 - Do not load runtime configuration, discover Markdown files, embed text, search, or rebuild the index.
 - Print a concise initialization summary to stdout.
+- Print filesystem errors to stderr and exit non-zero.
+
+### `speecdex --install-skill`
+
+Install the packaged `docs-search` skill into local project-scoped AI coding agent folders.
+
+Required behavior:
+
+- Detect Codex when `<project-root>/.codex/` exists or `<project-root>/AGENTS.md` exists.
+- Detect Claude Code when `<project-root>/.claude/` exists or `<project-root>/CLAUDE.md` exists.
+- When a marker file exists but its agent folder is missing, create the missing agent folder under the project root.
+- Install the packaged skill file to `.codex/skills/docs-search/SKILL.md` and/or `.claude/skills/docs-search/SKILL.md` for detected agents.
+- Never read or write global home-directory agent settings.
+- Never overwrite an existing `SKILL.md`; report it as existing instead.
+- Do not load runtime configuration, discover Markdown files, embed text, search, or rebuild the index.
+- If no supported local agent installation is detected, print a concise no-op summary and exit `0`.
 - Print filesystem errors to stderr and exit non-zero.
 
 ### `speecdex --query "<query>"`
@@ -134,6 +150,7 @@ Required behavior:
 - `--force` is valid only for indexing.
 - `--show-branch` is mutually exclusive with `--query`, `--text`, `--force`, and `--service`.
 - `--init` is mutually exclusive with all other flags.
+- `--install-skill` is mutually exclusive with all other flags.
 - `--query` requires a non-empty value after trimming whitespace.
 - `--text` may be repeated.
 - Empty `--text` values are invalid.
@@ -153,6 +170,7 @@ Stdout is reserved for command results:
 
 - Indexing summary.
 - Initialization summary.
+- Skill installation summary.
 - Search fenced YAML.
 - Stored branch output from `--show-branch`.
 - Service startup URL.

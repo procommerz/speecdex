@@ -29,21 +29,23 @@ const (
 type Mode string
 
 const (
-	ModeIndex      Mode = "index"
-	ModeSearch     Mode = "search"
-	ModeService    Mode = "service"
-	ModeShowBranch Mode = "show-branch"
-	ModeInit       Mode = "init"
+	ModeIndex        Mode = "index"
+	ModeSearch       Mode = "search"
+	ModeService      Mode = "service"
+	ModeShowBranch   Mode = "show-branch"
+	ModeInit         Mode = "init"
+	ModeInstallSkill Mode = "install-skill"
 )
 
 type Options struct {
-	Mode       Mode
-	Query      string
-	Text       []string
-	Service    bool
-	Force      bool
-	ShowBranch bool
-	Init       bool
+	Mode         Mode
+	Query        string
+	Text         []string
+	Service      bool
+	Force        bool
+	ShowBranch   bool
+	Init         bool
+	InstallSkill bool
 }
 
 type textFlags []string
@@ -90,6 +92,9 @@ func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions
 	}
 	if opts.Mode == ModeInit {
 		return runInit(loadOptions.ProjectRoot, stdout, stderr)
+	}
+	if opts.Mode == ModeInstallSkill {
+		return runInstallSkill(loadOptions.ProjectRoot, stdout, stderr)
 	}
 	if loadOptions.UserHome == "" {
 		userHome, err := os.UserHomeDir()
@@ -532,6 +537,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 		fmt.Fprintln(stderr, "  speecdex --show-branch")
 		fmt.Fprintln(stderr, "  speecdex --service")
 		fmt.Fprintln(stderr, "  speecdex --init")
+		fmt.Fprintln(stderr, "  speecdex --install-skill")
 	}
 
 	flags.StringVar(&opts.Query, "query", "", "semantic search query")
@@ -540,6 +546,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	flags.BoolVar(&opts.Force, "force", false, "rebuild current files without reusing checksum-matched chunks")
 	flags.BoolVar(&opts.ShowBranch, "show-branch", false, "print the git branch stored in the local index")
 	flags.BoolVar(&opts.Init, "init", false, "initialize project configuration files")
+	flags.BoolVar(&opts.InstallSkill, "install-skill", false, "install the docs-search skill into local project agent folders")
 
 	if err := flags.Parse(args); err != nil {
 		return Options{}, err
@@ -559,6 +566,9 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	if opts.Init && (opts.ShowBranch || opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
 		return Options{}, usageError(stderr, flags, "--init cannot be combined with other flags")
 	}
+	if opts.InstallSkill && (opts.Init || opts.ShowBranch || opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
+		return Options{}, usageError(stderr, flags, "--install-skill cannot be combined with other flags")
+	}
 	if opts.ShowBranch && (opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
 		return Options{}, usageError(stderr, flags, "--show-branch cannot be combined with other flags")
 	}
@@ -572,6 +582,8 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	switch {
 	case opts.Init:
 		opts.Mode = ModeInit
+	case opts.InstallSkill:
+		opts.Mode = ModeInstallSkill
 	case opts.ShowBranch:
 		opts.Mode = ModeShowBranch
 	case opts.Service:
