@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -121,36 +122,187 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 	}
 }
 
-func TestRunReturnsRuntimeErrorForValidUnimplementedModes(t *testing.T) {
+func TestRunReturnsRuntimeErrorForUnimplementedServiceMode(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "index", args: nil, want: "speecdex index mode is not implemented yet"},
-		{name: "service", args: []string{"--service"}, want: "speecdex service mode is not implemented yet"},
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, []string{"--service"}, &stdout, &stderr, t.TempDir(), t.TempDir())
+	if code != ExitRuntimeError {
+		t.Fatalf("Run() exit code = %d, want %d", code, ExitRuntimeError)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "speecdex service mode is not implemented yet") {
+		t.Fatalf("Run() stderr = %q, want service unimplemented error", stderr.String())
+	}
+}
+
+func TestRunIndexesMarkdownProjectAndWritesSummary(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	requests := make(chan embeddingRequestCapture, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got embeddingRequestCapture
+		got.Path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&got.Body); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		requests <- got
+
+		data := make([]map[string]any, len(got.Body.Input))
+		for i := range got.Body.Input {
+			data[i] = map[string]any{
+				"index":     i,
+				"embedding": []float64{float64(i + 1), float64(i + 2)},
+			}
+		}
+		writeJSON(t, w, map[string]any{
+			"data":  data,
+			"model": "test-model",
+		})
+	}))
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  ignored_entries:
+    - docs/private
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nRoot business object\n")
+	writeProjectFile(t, projectRoot, "docs/b.markdown", "# Bravo\nimplements BusinessObject\n")
+	writeProjectFile(t, projectRoot, "docs/private/secret.md", "# Secret\nshould not embed\n")
+	writeProjectFile(t, projectRoot, "notes.txt", "# Not markdown\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stderr: %q", stderr.String())
 	}
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	gotRequest := <-requests
+	if gotRequest.Path != "/v1/embeddings" || gotRequest.Body.Model != "test-model" {
+		t.Fatalf("embedding request = %#v, want /v1/embeddings with test model", gotRequest)
+	}
+	if len(gotRequest.Body.Input) != 2 {
+		t.Fatalf("embedding input count = %d, want 2: %#v", len(gotRequest.Body.Input), gotRequest.Body.Input)
+	}
+	if strings.Contains(strings.Join(gotRequest.Body.Input, "\n"), "should not embed") {
+		t.Fatalf("embedding inputs include ignored file text: %#v", gotRequest.Body.Input)
+	}
 
-			var stdout bytes.Buffer
-			var stderr bytes.Buffer
-			code := runForTest(t, tt.args, &stdout, &stderr, t.TempDir(), t.TempDir())
-			if code != ExitRuntimeError {
-				t.Fatalf("Run() exit code = %d, want %d", code, ExitRuntimeError)
-			}
-			if stdout.Len() != 0 {
-				t.Fatalf("Run() wrote unexpected stdout: %q", stdout.String())
-			}
-			if !strings.Contains(stderr.String(), tt.want) {
-				t.Fatalf("Run() stderr = %q, want to contain %q", stderr.String(), tt.want)
-			}
-		})
+	idx, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read() error = %v", err)
+	}
+	if idx.Header.EmbeddingProviderStyle != "openai-compatible" ||
+		idx.Header.EmbeddingModelIdentity != "test-model" ||
+		idx.Header.EmbeddingDimensions != 2 ||
+		idx.Header.ChunkSize != 200 ||
+		idx.Header.ChunkOverlap != 20 {
+		t.Fatalf("index header = %#v, want configured embedding and chunk metadata", idx.Header)
+	}
+	if !reflect.DeepEqual(idx.Header.IgnoredEntries, []string{"docs/private"}) {
+		t.Fatalf("IgnoredEntries = %#v, want docs/private", idx.Header.IgnoredEntries)
+	}
+	if len(idx.Sources) != 2 || idx.Sources[0].RelativePath != "docs/a.md" || idx.Sources[1].RelativePath != "docs/b.markdown" {
+		t.Fatalf("Sources = %#v, want indexed markdown sources in lexical order", idx.Sources)
+	}
+	if len(idx.Chunks) != 2 || idx.Chunks[0].Text != gotRequest.Body.Input[0] || idx.Chunks[1].Text != gotRequest.Body.Input[1] {
+		t.Fatalf("Chunks = %#v, want chunks matching embedded inputs %#v", idx.Chunks, gotRequest.Body.Input)
+	}
+	if !reflect.DeepEqual(idx.Chunks[0].Vector, []float64{1, 2}) || !reflect.DeepEqual(idx.Chunks[1].Vector, []float64{2, 3}) {
+		t.Fatalf("chunk vectors = %#v, %#v; want fake embedding vectors", idx.Chunks[0].Vector, idx.Chunks[1].Vector)
+	}
+
+	gotStdout := stdout.String()
+	for _, want := range []string{
+		"Project root: " + projectRoot,
+		"Markdown files discovered: 2",
+		"Markdown files indexed: 2",
+		"Chunks indexed: 2",
+		"Ignored entries: 1",
+		"Embedding provider: openai-compatible/test-model",
+		"Index artifact: " + storage.ArtifactPath(projectRoot),
+	} {
+		if !strings.Contains(gotStdout, want) {
+			t.Fatalf("stdout = %q, want to contain %q", gotStdout, want)
+		}
+	}
+}
+
+func TestRunIndexRequiresEmbeddingConfig(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitRuntimeError {
+		t.Fatalf("Run() exit code = %d, want %d", code, ExitRuntimeError)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "indexing requires llms.embedding configuration") {
+		t.Fatalf("stderr = %q, want missing embedding config error", stderr.String())
+	}
+	if _, err := os.Stat(storage.ArtifactPath(projectRoot)); !os.IsNotExist(err) {
+		t.Fatalf("index artifact stat error = %v, want missing artifact", err)
+	}
+}
+
+func TestRunIndexEmbeddingFailurePreservesPreviousIndex(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	writeSearchIndex(t, projectRoot, []storage.Chunk{
+		{ID: "old-chunk", SourcePath: "docs/old.md", StartLine: 1, EndLine: 1, Text: "previous index text", Vector: []float64{1, 0}},
+	}, "old-model", 2)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("forced embedding failure"))
+	}))
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeProjectFile(t, projectRoot, "docs/a.md", "# Alpha\nnew text\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	if code != ExitRuntimeError {
+		t.Fatalf("Run() exit code = %d, want %d", code, ExitRuntimeError)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "embed chunks") || !strings.Contains(stderr.String(), "forced embedding failure") {
+		t.Fatalf("stderr = %q, want embedding failure diagnostic", stderr.String())
+	}
+
+	got, err := storage.Read(projectRoot, storage.ReadOptions{})
+	if err != nil {
+		t.Fatalf("storage.Read() error = %v", err)
+	}
+	if got.Header.EmbeddingModelIdentity != "old-model" || len(got.Chunks) != 1 || got.Chunks[0].Text != "previous index text" {
+		t.Fatalf("index after failed rebuild = %#v, want previous index preserved", got)
 	}
 }
 
@@ -380,6 +532,18 @@ func writeTestConfig(t *testing.T, root string, name string, contents string) st
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	return path
+}
+
+func writeProjectFile(t *testing.T, root string, name string, contents string) {
+	t.Helper()
+
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 }
 
 func writeEmbeddingConfig(t *testing.T, root string, endpoint string, modelName string, dimensions int) {

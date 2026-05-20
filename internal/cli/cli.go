@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/procommerz/speecdex-search/internal/config"
 	"github.com/procommerz/speecdex-search/internal/embeddings"
+	"github.com/procommerz/speecdex-search/internal/indexing"
 	"github.com/procommerz/speecdex-search/internal/search"
 	"github.com/procommerz/speecdex-search/internal/storage"
 )
@@ -83,12 +85,95 @@ func run(args []string, stdout io.Writer, stderr io.Writer, loadOptions config.L
 		return ExitRuntimeError
 	}
 
-	if opts.Mode == ModeSearch {
+	switch opts.Mode {
+	case ModeIndex:
+		return runIndex(cfg, loadOptions.ProjectRoot, stdout, stderr)
+	case ModeSearch:
 		return runSearch(opts, cfg, loadOptions.ProjectRoot, stdout, stderr)
+	case ModeService:
+		fmt.Fprintf(stderr, "speecdex %s mode is not implemented yet\n", opts.Mode)
+		return ExitRuntimeError
+	default:
+		fmt.Fprintf(stderr, "speecdex %s mode is not implemented yet\n", opts.Mode)
+		return ExitRuntimeError
+	}
+}
+
+func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer) int {
+	if cfg.Embedding == nil {
+		fmt.Fprintln(stderr, "indexing requires llms.embedding configuration")
+		return ExitRuntimeError
 	}
 
-	fmt.Fprintf(stderr, "speecdex %s mode is not implemented yet\n", opts.Mode)
-	return ExitRuntimeError
+	absRoot, err := filepath.Abs(projectRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+
+	discovery, err := indexing.DiscoverMarkdown(indexing.Options{
+		ProjectRoot:            absRoot,
+		IgnoredEntries:         cfg.IgnoredEntries,
+		ChunkSize:              cfg.Indexing.ChunkSize,
+		ChunkOverlap:           cfg.Indexing.ChunkOverlap,
+		EmbeddingModelIdentity: cfg.Embedding.ModelName,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+
+	chunks := indexing.ChunkFiles(discovery.Files, indexing.Options{
+		ChunkSize:              cfg.Indexing.ChunkSize,
+		ChunkOverlap:           cfg.Indexing.ChunkOverlap,
+		EmbeddingModelIdentity: cfg.Embedding.ModelName,
+	})
+
+	texts := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		texts[i] = chunk.Text
+	}
+
+	embedder, err := newEmbedder(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+
+	vectors, err := embedder.Embed(context.Background(), texts)
+	if err != nil {
+		fmt.Fprintf(stderr, "embed chunks: %v\n", err)
+		return ExitRuntimeError
+	}
+
+	idx, err := storage.BuildIndex(storage.BuildOptions{
+		ProjectRoot:            absRoot,
+		EmbeddingProviderStyle: cfg.Embedding.Style,
+		EmbeddingModelIdentity: cfg.Embedding.ModelName,
+		EmbeddingDimensions:    cfg.Embedding.DefaultDims,
+		DistanceMetric:         storage.DistanceMetricCosine,
+		ChunkSize:              cfg.Indexing.ChunkSize,
+		ChunkOverlap:           cfg.Indexing.ChunkOverlap,
+		IgnoredEntries:         cfg.IgnoredEntries,
+	}, discovery.Files, chunks, vectors)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+
+	if err := storage.Write(absRoot, idx); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return ExitRuntimeError
+	}
+
+	fmt.Fprintf(stdout, "Project root: %s\n", absRoot)
+	fmt.Fprintf(stdout, "Markdown files discovered: %d\n", len(discovery.Files))
+	fmt.Fprintf(stdout, "Markdown files indexed: %d\n", len(discovery.Files))
+	fmt.Fprintf(stdout, "Chunks indexed: %d\n", len(chunks))
+	fmt.Fprintf(stdout, "Ignored entries: %d\n", discovery.IgnoredEntriesCount)
+	fmt.Fprintf(stdout, "Embedding provider: %s/%s\n", cfg.Embedding.Style, cfg.Embedding.ModelName)
+	fmt.Fprintf(stdout, "Index artifact: %s\n", storage.ArtifactPath(absRoot))
+	return ExitOK
 }
 
 func runSearch(opts Options, cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer) int {
@@ -113,7 +198,7 @@ func runSearch(opts Options, cfg config.Config, projectRoot string, stdout io.Wr
 	}
 
 	if opts.Query != "" {
-		embedder, err = newSearchEmbedder(cfg)
+		embedder, err = newEmbedder(cfg)
 		if err != nil {
 			fmt.Fprintf(stderr, "%v\n", err)
 			return ExitRuntimeError
@@ -135,7 +220,7 @@ func runSearch(opts Options, cfg config.Config, projectRoot string, stdout io.Wr
 	return ExitOK
 }
 
-func newSearchEmbedder(cfg config.Config) (search.Embedder, error) {
+func newEmbedder(cfg config.Config) (search.Embedder, error) {
 	model := cfg.Embedding
 	endpoint := model.Endpoint
 	switch model.Style {
