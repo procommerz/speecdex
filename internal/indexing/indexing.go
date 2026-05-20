@@ -250,6 +250,7 @@ func splitLogicalLines(text string) []string {
 func chooseChunkEnd(lines []string, start int, chunkSize int) int {
 	size := 0
 	lastPreferredEnd := 0
+	fence := fenceStateBefore(lines, start)
 	for i := start; i < len(lines); i++ {
 		lineSize := runeLen(lines[i])
 		if i > start {
@@ -264,15 +265,104 @@ func chooseChunkEnd(lines []string, start int, chunkSize int) int {
 
 		size += lineSize
 		if strings.TrimSpace(lines[i]) == "" {
+			// Preserve compatibility: blank lines remain preferred boundaries
+			// even when they appear inside fenced code blocks.
 			lastPreferredEnd = i + 1
 		}
-		// TODO: Track fenced code blocks before treating Markdown headings in code
-		// fences differently from document headings.
-		if i+1 < len(lines) && isHeading(lines[i+1]) && i+1 > start {
+		fence.Update(lines[i])
+		if i+1 < len(lines) && !fence.Active && isHeading(lines[i+1]) && i+1 > start {
 			lastPreferredEnd = i + 1
 		}
 	}
 	return len(lines)
+}
+
+type fencedCodeState struct {
+	Active bool
+	marker byte
+	length int
+}
+
+func fenceStateBefore(lines []string, end int) fencedCodeState {
+	var state fencedCodeState
+	if end > len(lines) {
+		end = len(lines)
+	}
+	for i := 0; i < end; i++ {
+		state.Update(lines[i])
+	}
+	return state
+}
+
+func (s *fencedCodeState) Update(line string) {
+	if s.Active {
+		if isClosingFence(line, s.marker, s.length) {
+			s.Active = false
+			s.marker = 0
+			s.length = 0
+		}
+		return
+	}
+
+	marker, length, ok := openingFence(line)
+	if !ok {
+		return
+	}
+	s.Active = true
+	s.marker = marker
+	s.length = length
+}
+
+func openingFence(line string) (byte, int, bool) {
+	line = trimFenceIndent(line)
+	if line == "" {
+		return 0, 0, false
+	}
+	marker := line[0]
+	if marker != '`' && marker != '~' {
+		return 0, 0, false
+	}
+	length := countFenceMarkers(line, marker)
+	if length < 3 {
+		return 0, 0, false
+	}
+	return marker, length, true
+}
+
+func isClosingFence(line string, marker byte, openingLength int) bool {
+	line = trimFenceIndent(line)
+	if line == "" || line[0] != marker {
+		return false
+	}
+	length := countFenceMarkers(line, marker)
+	if length < openingLength {
+		return false
+	}
+	for i := length; i < len(line); i++ {
+		if line[i] != ' ' && line[i] != '\t' {
+			return false
+		}
+	}
+	return true
+}
+
+func trimFenceIndent(line string) string {
+	spaces := 0
+	for spaces < len(line) && line[spaces] == ' ' {
+		spaces++
+	}
+	if spaces > 3 {
+		return ""
+	}
+	return line[spaces:]
+}
+
+func countFenceMarkers(line string, marker byte) int {
+	count := 0
+	for count < len(line) && line[count] == marker {
+		count++
+	}
+	return count
 }
 
 func overlapStart(lines []string, start int, end int, chunkOverlap int) int {

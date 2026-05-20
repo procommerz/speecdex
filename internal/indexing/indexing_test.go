@@ -251,6 +251,153 @@ func TestChunkMarkdownHandlesManyShortHeadingSections(t *testing.T) {
 	}
 }
 
+func TestChooseChunkEndIgnoresHeadingsInsideFencedCode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		lines     []string
+		chunkSize int
+		want      int
+	}{
+		{
+			name: "backtick fence",
+			lines: []string{
+				"intro paragraph",
+				"```",
+				"# not a heading",
+				"code body with enough text",
+			},
+			chunkSize: 42,
+			want:      3,
+		},
+		{
+			name: "tilde fence",
+			lines: []string{
+				"intro paragraph",
+				"~~~",
+				"# not a heading",
+				"code body with enough text",
+			},
+			chunkSize: 38,
+			want:      3,
+		},
+		{
+			name: "fence with info string",
+			lines: []string{
+				"intro paragraph",
+				"```bash",
+				"# shell comment",
+				"echo enough text here",
+			},
+			chunkSize: 40,
+			want:      3,
+		},
+		{
+			name: "one-space indented fence",
+			lines: []string{
+				"intro paragraph",
+				" ```yaml",
+				"# yaml comment",
+				"key: value with text",
+			},
+			chunkSize: 42,
+			want:      3,
+		},
+		{
+			name: "two-space indented fence",
+			lines: []string{
+				"intro paragraph",
+				"  ~~~yaml",
+				"# yaml comment",
+				"key: value with text",
+			},
+			chunkSize: 42,
+			want:      3,
+		},
+		{
+			name: "three-space indented fence",
+			lines: []string{
+				"intro paragraph",
+				"   ```yaml",
+				"# yaml comment",
+				"key: value with text",
+			},
+			chunkSize: 43,
+			want:      3,
+		},
+		{
+			name: "unterminated fence",
+			lines: []string{
+				"intro paragraph",
+				"```",
+				"# still code",
+				"code body",
+				"## also code",
+				"trailing text that overflows the chunk",
+			},
+			chunkSize: 65,
+			want:      5,
+		},
+		{
+			name: "heading after closed fence",
+			lines: []string{
+				"intro paragraph",
+				"```",
+				"# not a heading",
+				"```",
+				"## Real Heading",
+				"real heading body long enough to overflow",
+			},
+			chunkSize: 48,
+			want:      4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := chooseChunkEnd(tt.lines, 0, tt.chunkSize); got != tt.want {
+				t.Fatalf("chooseChunkEnd() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestChunkMarkdownNoFenceFixtureIDsRemainStable(t *testing.T) {
+	t.Parallel()
+
+	file := MarkdownFile{
+		RelativePath: "docs/no-fences.md",
+		Text: strings.Join([]string{
+			"# Root",
+			"intro",
+			"## One",
+			"alpha",
+			"### Two",
+			"bravo",
+			"## Three",
+			"charlie",
+		}, "\n"),
+	}
+
+	chunks := ChunkMarkdown(file, Options{ChunkSize: 24, ChunkOverlap: 6})
+	got := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		got[i] = chunk.ID
+	}
+	want := []string{
+		"f9319e91b99b73582e305e8094c73d5615f6543b80b5f424e5bf052fcbb3aca2",
+		"061eb31db56600c28489d48485b51caa4256f9c6d477262262b28b19084ad95c",
+		"4aea1fa415ff9e1ea931b7d23c228c7426ed41d434f91e6e0058fed830dc5e1d",
+		"16e1b9e8da0047dc81bd3c60782fe18c6dc0a7aff5ad30ccb69c1e194e004e6b",
+		"6c204f1ca00b99ef245938c22d3c16ca2f6a8e5b70bf57d4840a11aedda10608",
+		"d4c3b3980fde9d03dfd97276771e55af6fbdd71670b2e49421a702add76de1e2",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("chunk IDs = %#v, want %#v", got, want)
+	}
+}
+
 func TestChunkMarkdownDiscardsStandaloneTableSeparatorBeforeLongRow(t *testing.T) {
 	t.Parallel()
 
