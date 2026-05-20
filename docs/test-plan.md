@@ -15,6 +15,8 @@ Required scenarios:
 - `speecdex --text "extends BusinessObject"` runs literal-only search.
 - `speecdex --query "root" --text "extends BusinessObject"` runs combined OR search.
 - `speecdex --service` starts service mode and rejects search/index flags.
+- `speecdex --init` creates missing project config files without loading runtime config.
+- `speecdex --init` preserves existing `.yaml` configs and treats existing `.yml` configs as present.
 - Invalid flag combinations exit with code `2`.
 - Runtime failures exit with code `1`.
 

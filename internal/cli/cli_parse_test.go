@@ -49,6 +49,11 @@ func TestParseSelectsModes(t *testing.T) {
 			args: []string{"--show-branch"},
 			want: Options{Mode: ModeShowBranch, ShowBranch: true},
 		},
+		{
+			name: "init selects init mode",
+			args: []string{"--init"},
+			want: Options{Mode: ModeInit, Init: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -128,6 +133,31 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 			args:       []string{"--show-branch", "--service"},
 			wantStderr: "--show-branch cannot be combined",
 		},
+		{
+			name:       "init rejects query",
+			args:       []string{"--init", "--query", "root"},
+			wantStderr: "--init cannot be combined",
+		},
+		{
+			name:       "init rejects text",
+			args:       []string{"--init", "--text", "root"},
+			wantStderr: "--init cannot be combined",
+		},
+		{
+			name:       "init rejects force",
+			args:       []string{"--init", "--force"},
+			wantStderr: "--init cannot be combined",
+		},
+		{
+			name:       "init rejects show branch",
+			args:       []string{"--init", "--show-branch"},
+			wantStderr: "--init cannot be combined",
+		},
+		{
+			name:       "init rejects service",
+			args:       []string{"--init", "--service"},
+			wantStderr: "--init cannot be combined",
+		},
 	}
 
 	for _, tt := range tests {
@@ -148,6 +178,23 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 				t.Fatalf("Run() stderr = %q, want to contain %q", stderr.String(), tt.wantStderr)
 			}
 		})
+	}
+}
+
+func TestUsageIncludesInitCommand(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"--unknown"}, &stdout, &stderr)
+	if code != ExitUsageError {
+		t.Fatalf("Run() exit code = %d, want %d", code, ExitUsageError)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "speecdex --init") {
+		t.Fatalf("Run() stderr = %q, want usage to include init command", stderr.String())
 	}
 }
 
@@ -185,6 +232,9 @@ func assertOptions(t *testing.T, got Options, want Options) {
 	}
 	if got.ShowBranch != want.ShowBranch {
 		t.Fatalf("ShowBranch = %t, want %t", got.ShowBranch, want.ShowBranch)
+	}
+	if got.Init != want.Init {
+		t.Fatalf("Init = %t, want %t", got.Init, want.Init)
 	}
 	if len(got.Text) != len(want.Text) {
 		t.Fatalf("Text length = %d, want %d; got %#v", len(got.Text), len(want.Text), got.Text)

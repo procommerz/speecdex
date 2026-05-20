@@ -21,6 +21,11 @@ You can run `speecdex --service` to launch a persistent service that will provid
 
 ## CLI Interface
 
+Initialize project config files in the current folder: `speecdex --init`
+
+This creates `.speecdex/config.yaml` and `.speecdex/llms.yaml` when missing,
+without overwriting existing `.yaml` or `.yml` config files.
+
 Reindex markdown docs in the current folder tree: `speecdex`
 
 Speecdex compares Markdown file checksums against the previous compatible index.

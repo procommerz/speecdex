@@ -33,6 +33,7 @@ const (
 	ModeSearch     Mode = "search"
 	ModeService    Mode = "service"
 	ModeShowBranch Mode = "show-branch"
+	ModeInit       Mode = "init"
 )
 
 type Options struct {
@@ -42,6 +43,7 @@ type Options struct {
 	Service    bool
 	Force      bool
 	ShowBranch bool
+	Init       bool
 }
 
 type textFlags []string
@@ -83,6 +85,12 @@ func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions
 		}
 		loadOptions.ProjectRoot = projectRoot
 	}
+	if opts.Mode == ModeShowBranch {
+		return runShowBranch(loadOptions.ProjectRoot, stdout, stderr)
+	}
+	if opts.Mode == ModeInit {
+		return runInit(loadOptions.ProjectRoot, stdout, stderr)
+	}
 	if loadOptions.UserHome == "" {
 		userHome, err := os.UserHomeDir()
 		if err != nil {
@@ -90,9 +98,6 @@ func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions
 			return ExitRuntimeError
 		}
 		loadOptions.UserHome = userHome
-	}
-	if opts.Mode == ModeShowBranch {
-		return runShowBranch(loadOptions.ProjectRoot, stdout, stderr)
 	}
 	cfg, err := config.Load(loadOptions)
 	if err != nil {
@@ -526,6 +531,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 		fmt.Fprintln(stderr, "  speecdex --text <literal> [--text <literal> ...]")
 		fmt.Fprintln(stderr, "  speecdex --show-branch")
 		fmt.Fprintln(stderr, "  speecdex --service")
+		fmt.Fprintln(stderr, "  speecdex --init")
 	}
 
 	flags.StringVar(&opts.Query, "query", "", "semantic search query")
@@ -533,6 +539,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	flags.BoolVar(&opts.Service, "service", false, "start the local embedding service")
 	flags.BoolVar(&opts.Force, "force", false, "rebuild current files without reusing checksum-matched chunks")
 	flags.BoolVar(&opts.ShowBranch, "show-branch", false, "print the git branch stored in the local index")
+	flags.BoolVar(&opts.Init, "init", false, "initialize project configuration files")
 
 	if err := flags.Parse(args); err != nil {
 		return Options{}, err
@@ -549,6 +556,9 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 		return Options{}, usageError(stderr, flags, "--query requires a non-empty value")
 	}
 
+	if opts.Init && (opts.ShowBranch || opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
+		return Options{}, usageError(stderr, flags, "--init cannot be combined with other flags")
+	}
 	if opts.ShowBranch && (opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
 		return Options{}, usageError(stderr, flags, "--show-branch cannot be combined with other flags")
 	}
@@ -560,6 +570,8 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	}
 
 	switch {
+	case opts.Init:
+		opts.Mode = ModeInit
 	case opts.ShowBranch:
 		opts.Mode = ModeShowBranch
 	case opts.Service:

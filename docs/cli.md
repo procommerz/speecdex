@@ -14,7 +14,7 @@ Rebuild the local index for the current folder tree, reusing unchanged file chun
 
 Required behavior:
 
-- Run indexing mode when no `--query`, `--text`, or `--service` flag is provided.
+- Run indexing mode when no `--query`, `--text`, `--service`, `--show-branch`, or `--init` flag is provided.
 - Print line-oriented indexing progress to stderr while files are processed.
 - Read configuration before discovery.
 - Store the current git branch in the index header when git is available and the project root is inside a git worktree.
@@ -50,6 +50,21 @@ Progress output must use this form:
 ```text
 Indexing file <current>/<total>: <path> (<chunks> chunks) | elapsed <duration> | <rate> chunks/s | ETA <duration>
 ```
+
+### `speecdex --init`
+
+Initialize project-scope Speecdex configuration in the current folder.
+
+Required behavior:
+
+- Create `<project-root>/.speecdex/` when missing.
+- Create `.speecdex/config.yaml` from the packaged default app config when neither `config.yaml` nor `config.yml` exists.
+- Create `.speecdex/llms.yaml` from the packaged default model config when neither `llms.yaml` nor `llms.yml` exists.
+- Treat an existing `.yaml` or `.yml` file for the same config type as existing config and do not create a duplicate.
+- Never overwrite existing config files.
+- Do not load runtime configuration, discover Markdown files, embed text, search, or rebuild the index.
+- Print a concise initialization summary to stdout.
+- Print filesystem errors to stderr and exit non-zero.
 
 ### `speecdex --query "<query>"`
 
@@ -118,6 +133,7 @@ Required behavior:
 - `--service` is mutually exclusive with indexing and search flags.
 - `--force` is valid only for indexing.
 - `--show-branch` is mutually exclusive with `--query`, `--text`, `--force`, and `--service`.
+- `--init` is mutually exclusive with all other flags.
 - `--query` requires a non-empty value after trimming whitespace.
 - `--text` may be repeated.
 - Empty `--text` values are invalid.
@@ -136,6 +152,7 @@ Use these exit code meanings:
 Stdout is reserved for command results:
 
 - Indexing summary.
+- Initialization summary.
 - Search fenced YAML.
 - Stored branch output from `--show-branch`.
 - Service startup URL.
