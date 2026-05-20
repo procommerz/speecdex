@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -144,7 +145,7 @@ func TestRunIndexesMarkdownProjectAndWritesSummary(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	userHome := t.TempDir()
-	requests := make(chan embeddingRequestCapture, 1)
+	requests := make(chan embeddingRequestCapture, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var got embeddingRequestCapture
 		got.Path = r.URL.Path
@@ -183,23 +184,26 @@ config:
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runForTest(t, nil, &stdout, &stderr, projectRoot, userHome)
+	code := runForTestWithClock(t, nil, &stdout, &stderr, projectRoot, userHome, steppedClock(
+		time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC),
+		time.Second,
+	))
 	if code != ExitOK {
 		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("Run() wrote unexpected stderr: %q", stderr.String())
-	}
 
-	gotRequest := <-requests
-	if gotRequest.Path != "/v1/embeddings" || gotRequest.Body.Model != "test-model" {
-		t.Fatalf("embedding request = %#v, want /v1/embeddings with test model", gotRequest)
+	gotRequests := []embeddingRequestCapture{<-requests, <-requests}
+	for _, gotRequest := range gotRequests {
+		if gotRequest.Path != "/v1/embeddings" || gotRequest.Body.Model != "test-model" {
+			t.Fatalf("embedding request = %#v, want /v1/embeddings with test model", gotRequest)
+		}
 	}
-	if len(gotRequest.Body.Input) != 2 {
-		t.Fatalf("embedding input count = %d, want 2: %#v", len(gotRequest.Body.Input), gotRequest.Body.Input)
+	if len(gotRequests[0].Body.Input) != 1 || len(gotRequests[1].Body.Input) != 1 {
+		t.Fatalf("embedding input counts = %d, %d; want one request per file: %#v", len(gotRequests[0].Body.Input), len(gotRequests[1].Body.Input), gotRequests)
 	}
-	if strings.Contains(strings.Join(gotRequest.Body.Input, "\n"), "should not embed") {
-		t.Fatalf("embedding inputs include ignored file text: %#v", gotRequest.Body.Input)
+	allInputs := append(append([]string(nil), gotRequests[0].Body.Input...), gotRequests[1].Body.Input...)
+	if strings.Contains(strings.Join(allInputs, "\n"), "should not embed") {
+		t.Fatalf("embedding inputs include ignored file text: %#v", allInputs)
 	}
 
 	idx, err := storage.Read(projectRoot, storage.ReadOptions{})
@@ -219,12 +223,16 @@ config:
 	if len(idx.Sources) != 2 || idx.Sources[0].RelativePath != "docs/a.md" || idx.Sources[1].RelativePath != "docs/b.markdown" {
 		t.Fatalf("Sources = %#v, want indexed markdown sources in lexical order", idx.Sources)
 	}
-	if len(idx.Chunks) != 2 || idx.Chunks[0].Text != gotRequest.Body.Input[0] || idx.Chunks[1].Text != gotRequest.Body.Input[1] {
-		t.Fatalf("Chunks = %#v, want chunks matching embedded inputs %#v", idx.Chunks, gotRequest.Body.Input)
+	if len(idx.Chunks) != 2 || idx.Chunks[0].Text != allInputs[0] || idx.Chunks[1].Text != allInputs[1] {
+		t.Fatalf("Chunks = %#v, want chunks matching embedded inputs %#v", idx.Chunks, allInputs)
 	}
-	if !reflect.DeepEqual(idx.Chunks[0].Vector, []float64{1, 2}) || !reflect.DeepEqual(idx.Chunks[1].Vector, []float64{2, 3}) {
+	if !reflect.DeepEqual(idx.Chunks[0].Vector, []float64{1, 2}) || !reflect.DeepEqual(idx.Chunks[1].Vector, []float64{1, 2}) {
 		t.Fatalf("chunk vectors = %#v, %#v; want fake embedding vectors", idx.Chunks[0].Vector, idx.Chunks[1].Vector)
 	}
+
+	gotStderr := stderr.String()
+	assertProgressLine(t, gotStderr, `Indexing file 1/2: docs/a\.md \(1 chunks\) \| elapsed 1s \| 1\.00 chunks/s \| ETA 1s`)
+	assertProgressLine(t, gotStderr, `Indexing file 2/2: docs/b\.markdown \(1 chunks\) \| elapsed 2s \| 1\.00 chunks/s \| ETA 0s`)
 
 	gotStdout := stdout.String()
 	for _, want := range []string{
@@ -292,8 +300,8 @@ config:
 	if code != ExitOK {
 		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("Run() wrote unexpected stderr: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "Indexing file 1/1: docs/allowed.md (1 chunks)") {
+		t.Fatalf("Run() stderr = %q, want indexing progress for included file", stderr.String())
 	}
 
 	gotRequest := <-requests
@@ -319,6 +327,68 @@ config:
 	}
 	if strings.Contains(stdout.String(), "Only entries") {
 		t.Fatalf("stdout = %q, did not expect only_entries summary", stdout.String())
+	}
+}
+
+func TestRunIndexProgressUsesStableFileOrder(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	userHome := t.TempDir()
+	requests := make(chan embeddingRequestCapture, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got embeddingRequestCapture
+		got.Path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&got.Body); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		requests <- got
+
+		data := make([]map[string]any, len(got.Body.Input))
+		for i := range got.Body.Input {
+			data[i] = map[string]any{
+				"index":     i,
+				"embedding": []float64{float64(i + 1), float64(i + 2)},
+			}
+		}
+		writeJSON(t, w, map[string]any{
+			"data":  data,
+			"model": "test-model",
+		})
+	}))
+	defer server.Close()
+
+	writeEmbeddingConfig(t, projectRoot, server.URL+"/v1", "test-model", 2)
+	writeTestConfig(t, projectRoot, ".speecdex/config.yaml", `
+config:
+  indexing:
+    chunk_size: 200
+    chunk_overlap: 20
+`)
+	writeProjectFile(t, projectRoot, "z-last.md", "# Last\n")
+	writeProjectFile(t, projectRoot, "a-first.md", "# First\n")
+	writeProjectFile(t, projectRoot, "m-middle.md", "# Middle\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runForTestWithClock(t, nil, &stdout, &stderr, projectRoot, userHome, steppedClock(
+		time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC),
+		time.Second,
+	))
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", code, ExitOK, stderr.String())
+	}
+
+	for range 3 {
+		<-requests
+	}
+
+	got := stderr.String()
+	first := strings.Index(got, "Indexing file 1/3: a-first.md (1 chunks)")
+	middle := strings.Index(got, "Indexing file 2/3: m-middle.md (1 chunks)")
+	last := strings.Index(got, "Indexing file 3/3: z-last.md (1 chunks)")
+	if first < 0 || middle < 0 || last < 0 || !(first < middle && middle < last) {
+		t.Fatalf("stderr = %q, want progress in stable lexical file order", got)
 	}
 }
 
@@ -599,6 +669,28 @@ func runForTest(t *testing.T, args []string, stdout *bytes.Buffer, stderr *bytes
 	t.Helper()
 
 	return run(args, stdout, stderr, config.LoadOptions{ProjectRoot: projectRoot, UserHome: userHome})
+}
+
+func runForTestWithClock(t *testing.T, args []string, stdout *bytes.Buffer, stderr *bytes.Buffer, projectRoot string, userHome string, now func() time.Time) int {
+	t.Helper()
+
+	return runWithClock(args, stdout, stderr, config.LoadOptions{ProjectRoot: projectRoot, UserHome: userHome}, now)
+}
+
+func steppedClock(start time.Time, step time.Duration) func() time.Time {
+	current := start.Add(-step)
+	return func() time.Time {
+		current = current.Add(step)
+		return current
+	}
+}
+
+func assertProgressLine(t *testing.T, got string, pattern string) {
+	t.Helper()
+
+	if !regexp.MustCompile(pattern).MatchString(got) {
+		t.Fatalf("stderr = %q, want progress line matching %q", got, pattern)
+	}
 }
 
 func writeTestConfig(t *testing.T, root string, name string, contents string) string {

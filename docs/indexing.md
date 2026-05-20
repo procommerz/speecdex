@@ -95,6 +95,25 @@ Required behavior:
 - Fail the indexing run if any chunk cannot be embedded.
 - Write the index only after all files and chunks have been processed successfully.
 
+## Progress
+
+Indexing prints line-oriented progress to stderr as files are processed.
+
+Each progress line must include:
+
+- Current file number out of total files.
+- Current relative file path.
+- Number of chunks for that file.
+- Elapsed time.
+- Current cumulative chunks-per-second rate.
+- ETA based on remaining chunks.
+
+Progress lines must use this form:
+
+```text
+Indexing file <current>/<total>: <path> (<chunks> chunks) | elapsed <duration> | <rate> chunks/s | ETA <duration>
+```
+
 ## Index Summary
 
 Successful indexing prints a summary to stdout.

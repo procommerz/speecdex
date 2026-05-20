@@ -14,7 +14,8 @@ Rebuild the local index for the current folder tree.
 
 Required behavior:
 
-- Run indexing mode when no `--query`, `--text`, or `--service` flag is provided (with some progress visualization).
+- Run indexing mode when no `--query`, `--text`, or `--service` flag is provided.
+- Print line-oriented indexing progress to stderr while files are processed.
 - Read configuration before discovery.
 - Discover, chunk, embed, and store indexed chunks.
 - Print a concise indexing summary to stdout.
@@ -28,6 +29,12 @@ Summary output must include:
 - Number of chunks indexed.
 - Embedding provider identity.
 - Index artifact path.
+
+Progress output must use this form:
+
+```text
+Indexing file <current>/<total>: <path> (<chunks> chunks) | elapsed <duration> | <rate> chunks/s | ETA <duration>
+```
 
 ### `speecdex --query "<query>"`
 
@@ -109,6 +116,6 @@ Stderr is reserved for:
 - Warnings.
 - Provider diagnostics.
 - Index compatibility errors.
+- Indexing progress.
 
 Search output must be machine-readable fenced YAML and must not include extra prose outside the fence.
-

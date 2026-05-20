@@ -21,8 +21,17 @@ You can run `speecdex --service` to launch a persistent service that will provid
 
 ## CLI Interface
 
-Reindex markdown docs in the  current folder tree: `speecdex`
+Reindex markdown docs in the current folder tree: `speecdex`
+
+During indexing, Speecdex prints per-file progress to stderr and the final
+indexing summary to stdout:
+
+```text
+Indexing file 1/3: docs/overview.md (2 chunks) | elapsed 1s | 2.00 chunks/s | ETA 1s
+```
+
 Search in the index, semantic only: `speecdex --query "root business object definitions"`
+
 Search in the index semantic OR any text match: `speecdex --query "root business object definitions" --text "extends BusinessObject" --text "implements BusinessObject"`
 
 ## App Configuration

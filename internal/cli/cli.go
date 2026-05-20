@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/procommerz/speecdex-search/internal/config"
 	"github.com/procommerz/speecdex-search/internal/embeddings"
@@ -58,6 +59,10 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func run(args []string, stdout io.Writer, stderr io.Writer, loadOptions config.LoadOptions) int {
+	return runWithClock(args, stdout, stderr, loadOptions, time.Now)
+}
+
+func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions config.LoadOptions, now func() time.Time) int {
 	opts, err := Parse(args, stderr)
 	if err != nil {
 		return ExitUsageError
@@ -87,7 +92,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, loadOptions config.L
 
 	switch opts.Mode {
 	case ModeIndex:
-		return runIndex(cfg, loadOptions.ProjectRoot, stdout, stderr)
+		return runIndex(cfg, loadOptions.ProjectRoot, stdout, stderr, now)
 	case ModeSearch:
 		return runSearch(opts, cfg, loadOptions.ProjectRoot, stdout, stderr)
 	case ModeService:
@@ -99,7 +104,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, loadOptions config.L
 	}
 }
 
-func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer) int {
+func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer, now func() time.Time) int {
 	if cfg.Embedding == nil {
 		fmt.Fprintln(stderr, "indexing requires llms.embedding configuration")
 		return ExitRuntimeError
@@ -124,15 +129,15 @@ func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io
 		return ExitRuntimeError
 	}
 
-	chunks := indexing.ChunkFiles(discovery.Files, indexing.Options{
+	chunkOptions := indexing.Options{
 		ChunkSize:              cfg.Indexing.ChunkSize,
 		ChunkOverlap:           cfg.Indexing.ChunkOverlap,
 		EmbeddingModelIdentity: cfg.Embedding.ModelName,
-	})
-
-	texts := make([]string, len(chunks))
-	for i, chunk := range chunks {
-		texts[i] = chunk.Text
+	}
+	filePlans := planFileChunks(discovery.Files, chunkOptions)
+	totalChunks := 0
+	for _, plan := range filePlans {
+		totalChunks += len(plan.Chunks)
 	}
 
 	embedder, err := newEmbedder(cfg)
@@ -141,10 +146,24 @@ func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io
 		return ExitRuntimeError
 	}
 
-	vectors, err := embedder.Embed(context.Background(), texts)
-	if err != nil {
-		fmt.Fprintf(stderr, "embed chunks: %v\n", err)
-		return ExitRuntimeError
+	progress := newIndexProgress(stderr, len(filePlans), totalChunks, now)
+	chunks := make([]indexing.Chunk, 0, totalChunks)
+	vectors := make([][]float64, 0, totalChunks)
+	for index, plan := range filePlans {
+		texts := make([]string, len(plan.Chunks))
+		for i, chunk := range plan.Chunks {
+			texts[i] = chunk.Text
+		}
+
+		fileVectors, err := embedder.Embed(context.Background(), texts)
+		if err != nil {
+			fmt.Fprintf(stderr, "embed chunks: %v\n", err)
+			return ExitRuntimeError
+		}
+
+		chunks = append(chunks, plan.Chunks...)
+		vectors = append(vectors, fileVectors...)
+		progress.Report(index+1, plan.File.RelativePath, len(plan.Chunks), len(chunks))
 	}
 
 	idx, err := storage.BuildIndex(storage.BuildOptions{
@@ -175,6 +194,72 @@ func runIndex(cfg config.Config, projectRoot string, stdout io.Writer, stderr io
 	fmt.Fprintf(stdout, "Embedding provider: %s/%s\n", cfg.Embedding.Style, cfg.Embedding.ModelName)
 	fmt.Fprintf(stdout, "Index artifact: %s\n", storage.ArtifactPath(absRoot))
 	return ExitOK
+}
+
+type fileChunkPlan struct {
+	File   indexing.MarkdownFile
+	Chunks []indexing.Chunk
+}
+
+func planFileChunks(files []indexing.MarkdownFile, opts indexing.Options) []fileChunkPlan {
+	plans := make([]fileChunkPlan, len(files))
+	for i, file := range files {
+		plans[i] = fileChunkPlan{
+			File:   file,
+			Chunks: indexing.ChunkMarkdown(file, opts),
+		}
+	}
+	return plans
+}
+
+type indexProgress struct {
+	writer      io.Writer
+	totalFiles  int
+	totalChunks int
+	startedAt   time.Time
+	now         func() time.Time
+}
+
+func newIndexProgress(writer io.Writer, totalFiles int, totalChunks int, now func() time.Time) indexProgress {
+	if now == nil {
+		now = time.Now
+	}
+	return indexProgress{
+		writer:      writer,
+		totalFiles:  totalFiles,
+		totalChunks: totalChunks,
+		startedAt:   now(),
+		now:         now,
+	}
+}
+
+func (p indexProgress) Report(currentFile int, path string, fileChunks int, indexedChunks int) {
+	elapsed := p.now().Sub(p.startedAt)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+
+	rate := 0.0
+	eta := time.Duration(0)
+	if indexedChunks > 0 && elapsed > 0 {
+		rate = float64(indexedChunks) / elapsed.Seconds()
+		remainingChunks := p.totalChunks - indexedChunks
+		if remainingChunks > 0 {
+			eta = time.Duration(float64(remainingChunks)/rate*float64(time.Second) + 0.5)
+		}
+	}
+
+	fmt.Fprintf(
+		p.writer,
+		"Indexing file %d/%d: %s (%d chunks) | elapsed %s | %.2f chunks/s | ETA %s\n",
+		currentFile,
+		p.totalFiles,
+		path,
+		fileChunks,
+		elapsed.Round(time.Second),
+		rate,
+		eta.Round(time.Second),
+	)
 }
 
 func runSearch(opts Options, cfg config.Config, projectRoot string, stdout io.Writer, stderr io.Writer) int {
