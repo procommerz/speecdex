@@ -11,6 +11,18 @@ embeddings, and fenced YAML search output. Local embedding models are served
 by any OpenAI-compatible runtime the user already runs (for example
 `llama-server`, Ollama, or LM Studio).
 
+## Installation
+
+Install the latest macOS release with Homebrew:
+
+```sh
+brew tap procommerz/speecdex
+brew install --cask speecdex
+```
+
+Linux amd64/arm64 binaries and macOS amd64/arm64 binaries are also published
+as archives on GitHub Releases.
+
 ## Quick Start
 
 Initialize project config files:
@@ -75,6 +87,9 @@ Codex or Claude Code project setups. It writes
 `.codex/skills/docs-search/SKILL.md` and/or
 `.claude/skills/docs-search/SKILL.md` when local agent folders or marker files
 are present. Existing skill files are preserved.
+
+`speecdex --version` prints the binary version, commit, and build date. Release
+builds receive these values from GoReleaser.
 
 During indexing, Speecdex prints per-file progress and rebuild diagnostics to
 stderr, and the final indexing summary to stdout:
@@ -229,3 +244,27 @@ make docker-build GOOS=darwin GOARCH=amd64
 The MVP build path uses `CGO_ENABLED=0`, which is suitable for the pure-Go
 CLI. Local model inference is delegated to an external OpenAI-compatible
 runtime, so Speecdex itself does not need cgo.
+
+## Releasing
+
+Tagged releases are built with GoReleaser from GitHub Actions. Push a tag like
+`v0.1.0` to publish darwin/linux archives for amd64 and arm64, generate
+`checksums.txt`, create the GitHub Release, and update the Homebrew cask in
+`github.com/procommerz/homebrew-speecdex`.
+
+The release workflow requires the app repository secret `TAP_GITHUB_TOKEN`,
+which must be a PAT with write access to the tap repository. The default
+`GITHUB_TOKEN` is used for the app repository release.
+
+Local release checks:
+
+```sh
+make docker-test
+goreleaser check
+goreleaser release --snapshot --clean --skip=publish
+```
+
+The first Homebrew cask releases are unsigned and not notarized. If macOS blocks
+the binary, explicitly trust the release from System Settings or remove the
+quarantine attribute manually only after confirming you trust the downloaded
+artifact.

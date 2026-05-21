@@ -59,6 +59,11 @@ func TestParseSelectsModes(t *testing.T) {
 			args: []string{"--install-skill"},
 			want: Options{Mode: ModeInstallSkill, InstallSkill: true},
 		},
+		{
+			name: "version selects version mode",
+			args: []string{"--version"},
+			want: Options{Mode: ModeVersion, Version: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -193,6 +198,26 @@ func TestRunRejectsInvalidUsageWithExitCodeTwo(t *testing.T) {
 			args:       []string{"--install-skill", "--init"},
 			wantStderr: "--install-skill cannot be combined",
 		},
+		{
+			name:       "version rejects query",
+			args:       []string{"--version", "--query", "root"},
+			wantStderr: "--version cannot be combined",
+		},
+		{
+			name:       "version rejects text",
+			args:       []string{"--version", "--text", "root"},
+			wantStderr: "--version cannot be combined",
+		},
+		{
+			name:       "version rejects force",
+			args:       []string{"--version", "--force"},
+			wantStderr: "--version cannot be combined",
+		},
+		{
+			name:       "version rejects init",
+			args:       []string{"--version", "--init"},
+			wantStderr: "--version cannot be combined",
+		},
 	}
 
 	for _, tt := range tests {
@@ -233,6 +258,26 @@ func TestUsageIncludesProjectSetupCommands(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "speecdex --install-skill") {
 		t.Fatalf("Run() stderr = %q, want usage to include install skill command", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "speecdex --version") {
+		t.Fatalf("Run() stderr = %q, want usage to include version command", stderr.String())
+	}
+}
+
+func TestRunPrintsDefaultVersion(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"--version"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("Run() exit code = %d, want %d", code, ExitOK)
+	}
+	if got, want := stdout.String(), "speecdex dev (commit none, built unknown)\n"; got != want {
+		t.Fatalf("Run() stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("Run() wrote unexpected stderr: %q", stderr.String())
 	}
 }
 
@@ -276,6 +321,9 @@ func assertOptions(t *testing.T, got Options, want Options) {
 	}
 	if got.InstallSkill != want.InstallSkill {
 		t.Fatalf("InstallSkill = %t, want %t", got.InstallSkill, want.InstallSkill)
+	}
+	if got.Version != want.Version {
+		t.Fatalf("Version = %t, want %t", got.Version, want.Version)
 	}
 	if len(got.Text) != len(want.Text) {
 		t.Fatalf("Text length = %d, want %d; got %#v", len(got.Text), len(want.Text), got.Text)

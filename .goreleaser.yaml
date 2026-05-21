@@ -1,0 +1,83 @@
+version: 2
+
+project_name: speecdex
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: speecdex-darwin
+    main: ./cmd/speecdex
+    binary: speecdex
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/procommerz/speecdex-search/internal/cli.version={{ .Version }} -X github.com/procommerz/speecdex-search/internal/cli.commit={{ .ShortCommit }} -X github.com/procommerz/speecdex-search/internal/cli.date={{ .CommitDate }}
+
+  - id: speecdex-linux
+    main: ./cmd/speecdex
+    binary: speecdex
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/procommerz/speecdex-search/internal/cli.version={{ .Version }} -X github.com/procommerz/speecdex-search/internal/cli.commit={{ .ShortCommit }} -X github.com/procommerz/speecdex-search/internal/cli.date={{ .CommitDate }}
+
+archives:
+  - id: speecdex-darwin
+    ids:
+      - speecdex-darwin
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+  - id: speecdex-linux
+    ids:
+      - speecdex-linux
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: procommerz
+    name: speecdex
+
+homebrew_casks:
+  - name: speecdex
+    ids:
+      - speecdex-darwin
+    binaries:
+      - speecdex
+    repository:
+      owner: procommerz
+      name: homebrew-speecdex
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: goreleaserbot@users.noreply.github.com
+    directory: Casks
+    homepage: "https://github.com/procommerz/speecdex"
+    description: "Local-first semantic and literal search over Markdown documentation."
+    caveats: |
+      Speecdex's macOS binaries are not currently code-signed or notarized.
+      If macOS blocks the binary, explicitly trust it from System Settings or
+      remove quarantine manually only after confirming you trust this release.

@@ -14,7 +14,7 @@ Rebuild the local index for the current folder tree, reusing unchanged file chun
 
 Required behavior:
 
-- Run indexing mode when no `--query`, `--text`, `--show-branch`, `--init`, or `--install-skill` flag is provided.
+- Run indexing mode when no `--query`, `--text`, `--show-branch`, `--init`, `--install-skill`, or `--version` flag is provided.
 - Print line-oriented indexing progress to stderr while files are processed.
 - Read configuration before discovery.
 - Store the current git branch in the index header when git is available and the project root is inside a git worktree.
@@ -130,12 +130,24 @@ Required behavior:
 - Exit non-zero when the index is missing, unreadable, or unsupported.
 - Do not discover Markdown files, embed text, or rebuild the index.
 
+### `speecdex --version`
+
+Print binary build metadata and exit.
+
+Required behavior:
+
+- Print `speecdex <version> (commit <commit>, built <date>)` to stdout followed by a newline.
+- Use `dev`, `none`, and `unknown` for local builds when release metadata is not injected.
+- Exit `0`.
+- Do not load runtime configuration, discover Markdown files, embed text, search, or rebuild the index.
+
 ## Flag Rules
 
 - `--force` is valid only for indexing.
 - `--show-branch` is mutually exclusive with `--query`, `--text`, and `--force`.
 - `--init` is mutually exclusive with all other flags.
 - `--install-skill` is mutually exclusive with all other flags.
+- `--version` is mutually exclusive with all other flags.
 - `--query` requires a non-empty value after trimming whitespace.
 - `--text` may be repeated.
 - Empty `--text` values are invalid.
@@ -158,6 +170,7 @@ Stdout is reserved for command results:
 - Skill installation summary.
 - Search fenced YAML.
 - Stored branch output from `--show-branch`.
+- Version output from `--version`.
 
 Search YAML includes the branch stored in the index as a top-level
 `indexed_branch` field after `results`. When no branch is stored, the field is

@@ -50,7 +50,8 @@ Expected behavior:
 
 Included in MVP:
 
-- macOS development build.
+- macOS development and release builds.
+- Linux release builds.
 - Recursive Markdown discovery.
 - Project and user configuration.
 - OpenAI-compatible embeddings (remote or local OpenAI-compatible runtime).
@@ -63,7 +64,6 @@ Included in MVP:
 Deferred from MVP:
 
 - Watch mode.
-- Linux release builds.
 - Hosted or shared indexes.
 - Incremental indexing guarantees.
 - Non-Markdown source formats.
@@ -77,4 +77,3 @@ Deferred from MVP:
 - Configurable but small: defaults should work for common Markdown projects, and configuration should remain readable YAML.
 - Provider-flexible: embeddings come from any OpenAI-compatible endpoint, whether remote or served locally by a runtime the user already runs.
 - Testable contracts: CLI behavior, config precedence, index metadata, and output format must be stable enough to drive tests before implementation.
-

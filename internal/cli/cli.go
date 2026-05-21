@@ -26,6 +26,12 @@ const (
 	ExitUsageError   = 2
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 type Mode string
 
 const (
@@ -35,6 +41,7 @@ const (
 	ModeShowBranch   Mode = "show-branch"
 	ModeInit         Mode = "init"
 	ModeInstallSkill Mode = "install-skill"
+	ModeVersion      Mode = "version"
 )
 
 type Options struct {
@@ -46,6 +53,7 @@ type Options struct {
 	ShowBranch   bool
 	Init         bool
 	InstallSkill bool
+	Version      bool
 }
 
 type textFlags []string
@@ -79,6 +87,9 @@ func runWithClock(args []string, stdout io.Writer, stderr io.Writer, loadOptions
 		return ExitUsageError
 	}
 
+	if opts.Mode == ModeVersion {
+		return runVersion(stdout)
+	}
 	if loadOptions.ProjectRoot == "" {
 		projectRoot, err := os.Getwd()
 		if err != nil {
@@ -508,6 +519,11 @@ func runShowBranch(projectRoot string, stdout io.Writer, stderr io.Writer) int {
 	return ExitOK
 }
 
+func runVersion(stdout io.Writer) int {
+	fmt.Fprintf(stdout, "speecdex %s (commit %s, built %s)\n", version, commit, date)
+	return ExitOK
+}
+
 func currentGitBranch(projectRoot string) string {
 	out, err := exec.Command("git", "-C", projectRoot, "branch", "--show-current").Output()
 	if err != nil {
@@ -550,6 +566,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 		fmt.Fprintln(stderr, "  speecdex --service")
 		fmt.Fprintln(stderr, "  speecdex --init")
 		fmt.Fprintln(stderr, "  speecdex --install-skill")
+		fmt.Fprintln(stderr, "  speecdex --version")
 	}
 
 	flags.StringVar(&opts.Query, "query", "", "semantic search query")
@@ -559,6 +576,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	flags.BoolVar(&opts.ShowBranch, "show-branch", false, "print the git branch stored in the local index")
 	flags.BoolVar(&opts.Init, "init", false, "initialize project configuration files")
 	flags.BoolVar(&opts.InstallSkill, "install-skill", false, "install the docs-search skill into local project agent folders")
+	flags.BoolVar(&opts.Version, "version", false, "print version information")
 
 	if err := flags.Parse(args); err != nil {
 		return Options{}, err
@@ -581,6 +599,9 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	if opts.InstallSkill && (opts.Init || opts.ShowBranch || opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
 		return Options{}, usageError(stderr, flags, "--install-skill cannot be combined with other flags")
 	}
+	if opts.Version && (opts.Init || opts.InstallSkill || opts.ShowBranch || opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
+		return Options{}, usageError(stderr, flags, "--version cannot be combined with other flags")
+	}
 	if opts.ShowBranch && (opts.Service || opts.Force || opts.Query != "" || len(opts.Text) > 0) {
 		return Options{}, usageError(stderr, flags, "--show-branch cannot be combined with other flags")
 	}
@@ -596,6 +617,8 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 		opts.Mode = ModeInit
 	case opts.InstallSkill:
 		opts.Mode = ModeInstallSkill
+	case opts.Version:
+		opts.Mode = ModeVersion
 	case opts.ShowBranch:
 		opts.Mode = ModeShowBranch
 	case opts.Service:
